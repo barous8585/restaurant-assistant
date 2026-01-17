@@ -113,12 +113,10 @@ def get_all_users_stats():
 
 def calculate_invoice(nb_restaurants, price_per_restaurant=49.0):
     """Calcule la facture basée sur le nombre de restaurants"""
-    if nb_restaurants <= 1:
-        return 0.0  # Gratuit pour 1 restaurant
-    elif nb_restaurants <= 3:
-        return price_per_restaurant  # Plan Pro: 49€
+    if nb_restaurants <= 3:
+        return price_per_restaurant  # Plan Standard: 49€ (1-3 restaurants)
     else:
-        return 149.0  # Plan Enterprise: 149€
+        return 149.0  # Plan Enterprise: 149€ (4+ restaurants)
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -593,18 +591,18 @@ if st.session_state.is_admin:
             total_restaurants = df_users['Nombre de Restaurants'].sum()
             st.metric("🏢 Total Restaurants", total_restaurants)
         with col3:
-            users_paying = len(df_users[df_users['Nombre de Restaurants'] > 1])
-            st.metric("💰 Clients Payants", users_paying)
+            users_standard = len(df_users[df_users['Nombre de Restaurants'] <= 3])
+            st.metric("📋 Standard (1-3)", users_standard)
         with col4:
-            users_free = len(df_users[df_users['Nombre de Restaurants'] <= 1])
-            st.metric("🆓 Gratuits", users_free)
+            users_enterprise = len(df_users[df_users['Nombre de Restaurants'] > 3])
+            st.metric("⭐ Enterprise (4+)", users_enterprise)
         
         st.markdown("---")
         st.subheader("📊 Liste des Utilisateurs")
         
         df_users['Facture (€)'] = df_users['Nombre de Restaurants'].apply(calculate_invoice)
         df_users['Plan'] = df_users['Nombre de Restaurants'].apply(
-            lambda x: "Gratuit" if x <= 1 else ("Pro (49€)" if x <= 3 else "Enterprise (149€)")
+            lambda x: "Standard (49€)" if x <= 3 else "Enterprise (149€)"
         )
         
         st.dataframe(
@@ -689,7 +687,7 @@ if st.session_state.is_admin:
                 with col1:
                     st.metric("🏢 Nombre de Restaurants", nb_restos)
                 with col2:
-                    plan = "Gratuit" if nb_restos <= 1 else ("Pro" if nb_restos <= 3 else "Enterprise")
+                    plan = "Standard" if nb_restos <= 3 else "Enterprise"
                     st.metric("📋 Plan", plan)
                 with col3:
                     st.metric("💰 Facture Mensuelle", f"{facture} €")

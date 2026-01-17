@@ -62,9 +62,9 @@ user_data_file = os.path.join(DATA_DIR, "restaurant_paris_data.pkl")
 with open(user_data_file, 'wb') as f:
     pickle.dump(restaurant_paris_data, f)
 
-print("✅ Utilisateur 'restaurant_paris' créé (1 restaurant - Plan Gratuit)")
+print("✅ Utilisateur 'restaurant_paris' créé (1 restaurant - Plan Standard 49€)")
 
-# Créer données pour pizza_lyon (2 restaurants - Pro 49€)
+# Créer données pour pizza_lyon (2 restaurants - Standard 49€)
 pizza_lyon_data = {
     'Pizza Lyon Centre': {
         'name': 'Pizza Lyon Centre',
@@ -86,7 +86,7 @@ user_data_file = os.path.join(DATA_DIR, "pizza_lyon_data.pkl")
 with open(user_data_file, 'wb') as f:
     pickle.dump(pizza_lyon_data, f)
 
-print("✅ Utilisateur 'pizza_lyon' créé (2 restaurants - Plan Pro 49€)")
+print("✅ Utilisateur 'pizza_lyon' créé (2 restaurants - Plan Standard 49€)")
 
 # Créer données pour group_restos (5 restaurants - Enterprise 149€)
 group_restos_data = {
@@ -138,7 +138,7 @@ print("📊 RÉSUMÉ")
 print("="*60)
 print("👥 Total utilisateurs: 3")
 print("🏢 Total restaurants: 8")
-print("💰 Revenu mensuel attendu: 0€ + 49€ + 149€ = 198€")
+print("💰 Revenu mensuel attendu: 49€ + 49€ + 149€ = 247€")
 print("\n🔑 Mot de passe pour tous les comptes démo: demo123")
 print("🔐 Mot de passe admin: admin")
 print("="*60)

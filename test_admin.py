@@ -41,12 +41,10 @@ def get_all_users_stats():
 
 def calculate_invoice(nb_restaurants, price_per_restaurant=49.0):
     """Calcule la facture basée sur le nombre de restaurants"""
-    if nb_restaurants <= 1:
-        return 0.0  # Gratuit pour 1 restaurant
-    elif nb_restaurants <= 3:
-        return price_per_restaurant  # Plan Pro: 49€
+    if nb_restaurants <= 3:
+        return price_per_restaurant  # Plan Standard: 49€ (1-3 restaurants)
     else:
-        return 149.0  # Plan Enterprise: 149€
+        return 149.0  # Plan Enterprise: 149€ (4+ restaurants)
 
 if __name__ == "__main__":
     print("🔐 Test du système d'administration\n")
@@ -62,7 +60,7 @@ if __name__ == "__main__":
             facture = calculate_invoice(user['Nombre de Restaurants'])
             total_revenue += facture
             
-            plan = "Gratuit" if user['Nombre de Restaurants'] <= 1 else ("Pro (49€)" if user['Nombre de Restaurants'] <= 3 else "Enterprise (149€)")
+            plan = "Standard (49€)" if user['Nombre de Restaurants'] <= 3 else "Enterprise (149€)"
             
             print(f"Utilisateur: {user['Utilisateur']}")
             print(f"  🏢 Restaurants: {user['Nombre de Restaurants']}")
