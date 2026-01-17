@@ -128,6 +128,33 @@ def change_admin_password(new_password):
     new_hash = hash_password(new_password)
     return new_hash
 
+def delete_user_account(username):
+    """Supprimer complètement un compte utilisateur (admin seulement)"""
+    users_file = os.path.join(DATA_DIR, "users.pkl")
+    
+    if not os.path.exists(users_file):
+        return False, "Fichier utilisateurs introuvable"
+    
+    # Charger les utilisateurs
+    with open(users_file, 'rb') as f:
+        users = pickle.load(f)
+    
+    if username not in users:
+        return False, "Utilisateur introuvable"
+    
+    # Supprimer de users.pkl
+    del users[username]
+    
+    with open(users_file, 'wb') as f:
+        pickle.dump(users, f)
+    
+    # Supprimer le fichier de données
+    user_data_file = os.path.join(DATA_DIR, f"{username}_data.pkl")
+    if os.path.exists(user_data_file):
+        os.remove(user_data_file)
+    
+    return True, f"Compte '{username}' supprimé avec succès"
+
 def save_restaurant_data(username, restaurants_data):
     user_data_file = os.path.join(DATA_DIR, f"{username}_data.pkl")
     
@@ -751,7 +778,43 @@ if st.session_state.is_admin:
         if selected_user:
             user_restaurants = load_restaurant_data(selected_user)
             
-            st.markdown(f"#### Restaurants de **{selected_user}**")
+            col_header1, col_header2 = st.columns([3, 1])
+            
+            with col_header1:
+                st.markdown(f"#### Restaurants de **{selected_user}**")
+            
+            with col_header2:
+                # Bouton de suppression
+                if st.button(f"🗑️ Supprimer {selected_user}", type="secondary", use_container_width=True):
+                    st.session_state.confirm_delete_user = selected_user
+            
+            # Confirmation de suppression
+            if st.session_state.get('confirm_delete_user') == selected_user:
+                st.warning(f"⚠️ **ATTENTION** : Vous êtes sur le point de supprimer définitivement le compte **{selected_user}**")
+                st.error("Cette action est **IRRÉVERSIBLE** et supprimera :")
+                st.markdown(f"""
+                - ❌ Le compte utilisateur
+                - ❌ Tous ses restaurants ({len(user_restaurants)} restaurant(s))
+                - ❌ Toutes ses données (ventes, recettes, etc.)
+                """)
+                
+                col_confirm1, col_confirm2, col_confirm3 = st.columns([1, 1, 1])
+                
+                with col_confirm1:
+                    if st.button("✅ Confirmer la suppression", type="primary", use_container_width=True):
+                        success, message = delete_user_account(selected_user)
+                        if success:
+                            st.success(f"✅ {message}")
+                            st.session_state.confirm_delete_user = None
+                            st.balloons()
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message}")
+                
+                with col_confirm2:
+                    if st.button("❌ Annuler", use_container_width=True):
+                        st.session_state.confirm_delete_user = None
+                        st.rerun()
             
             if user_restaurants:
                 resto_list = []
