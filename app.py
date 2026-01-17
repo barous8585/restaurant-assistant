@@ -70,6 +70,64 @@ def get_user_restaurant_info(username):
     
     return users[username]['restaurant_info']
 
+def change_user_password(username, new_password):
+    """Changer le mot de passe d'un utilisateur"""
+    users_file = os.path.join(DATA_DIR, "users.pkl")
+    
+    if not os.path.exists(users_file):
+        return False
+    
+    with open(users_file, 'rb') as f:
+        users = pickle.load(f)
+    
+    if username not in users:
+        return False
+    
+    users[username]['password_hash'] = hash_password(new_password)
+    
+    with open(users_file, 'wb') as f:
+        pickle.dump(users, f)
+    
+    return True
+
+def change_username(old_username, new_username):
+    """Changer le nom d'utilisateur (renommer le compte)"""
+    users_file = os.path.join(DATA_DIR, "users.pkl")
+    
+    if not os.path.exists(users_file):
+        return False, "Fichier utilisateurs introuvable"
+    
+    with open(users_file, 'rb') as f:
+        users = pickle.load(f)
+    
+    if old_username not in users:
+        return False, "Utilisateur introuvable"
+    
+    if new_username in users:
+        return False, "Ce nom d'utilisateur existe déjà"
+    
+    # Copier les données de l'ancien vers le nouveau
+    users[new_username] = users[old_username]
+    del users[old_username]
+    
+    # Sauvegarder users.pkl
+    with open(users_file, 'wb') as f:
+        pickle.dump(users, f)
+    
+    # Renommer le fichier de données
+    old_data_file = os.path.join(DATA_DIR, f"{old_username}_data.pkl")
+    new_data_file = os.path.join(DATA_DIR, f"{new_username}_data.pkl")
+    
+    if os.path.exists(old_data_file):
+        os.rename(old_data_file, new_data_file)
+    
+    return True, "Nom d'utilisateur modifié avec succès"
+
+def change_admin_password(new_password):
+    """Changer le mot de passe admin (nécessite modification manuelle du code)"""
+    new_hash = hash_password(new_password)
+    return new_hash
+
 def save_restaurant_data(username, restaurants_data):
     user_data_file = os.path.join(DATA_DIR, f"{username}_data.pkl")
     
@@ -572,11 +630,39 @@ if st.session_state.is_admin:
     st.title("🔐 Tableau de Bord Administrateur")
     st.markdown("---")
     
-    if st.sidebar.button("🚪 Déconnexion Admin"):
-        st.session_state.logged_in = False
-        st.session_state.is_admin = False
-        st.session_state.username = None
-        st.rerun()
+    col_btn1, col_btn2 = st.sidebar.columns(2)
+    
+    with col_btn1:
+        if st.button("🚪 Déconnexion", use_container_width=True):
+            st.session_state.logged_in = False
+            st.session_state.is_admin = False
+            st.session_state.username = None
+            st.rerun()
+    
+    st.sidebar.markdown("---")
+    
+    # Section Paramètres Admin
+    with st.sidebar.expander("⚙️ Paramètres Admin"):
+        st.markdown("### 🔐 Changer le Mot de Passe Admin")
+        st.info("Le nouveau hash sera affiché. Vous devrez le copier dans le code.")
+        
+        admin_new_pwd = st.text_input("Nouveau mot de passe admin", type="password", key="admin_new_pwd")
+        admin_new_pwd_confirm = st.text_input("Confirmer", type="password", key="admin_new_pwd_confirm")
+        
+        if st.button("Générer le nouveau hash"):
+            if not admin_new_pwd:
+                st.error("Veuillez entrer un mot de passe")
+            elif admin_new_pwd != admin_new_pwd_confirm:
+                st.error("Les mots de passe ne correspondent pas")
+            elif len(admin_new_pwd) < 6:
+                st.error("Le mot de passe doit contenir au moins 6 caractères")
+            else:
+                new_hash = change_admin_password(admin_new_pwd)
+                st.success("✅ Hash généré avec succès !")
+                st.code(f'ADMIN_PASSWORD_HASH = "{new_hash}"', language="python")
+                st.warning("⚠️ Copiez cette ligne dans app.py à la ligne 26, puis redéployez l'application.")
+    
+    st.sidebar.markdown("---")
     
     users_stats = get_all_users_stats()
     
@@ -708,6 +794,55 @@ if st.sidebar.button("🚪 Se déconnecter"):
     st.session_state.restaurants = {}
     st.session_state.current_restaurant = None
     st.rerun()
+
+st.sidebar.markdown("---")
+
+# Section Paramètres du Compte
+with st.sidebar.expander("⚙️ Paramètres du Compte"):
+    st.markdown("### 🔑 Changer le Mot de Passe")
+    
+    current_pwd = st.text_input("Mot de passe actuel", type="password", key="current_pwd")
+    new_pwd = st.text_input("Nouveau mot de passe", type="password", key="new_pwd")
+    new_pwd_confirm = st.text_input("Confirmer nouveau mot de passe", type="password", key="new_pwd_confirm")
+    
+    if st.button("Modifier le mot de passe"):
+        if not current_pwd or not new_pwd:
+            st.error("Veuillez remplir tous les champs")
+        elif not verify_user(st.session_state.username, current_pwd):
+            st.error("Mot de passe actuel incorrect")
+        elif new_pwd != new_pwd_confirm:
+            st.error("Les nouveaux mots de passe ne correspondent pas")
+        elif len(new_pwd) < 6:
+            st.error("Le nouveau mot de passe doit contenir au moins 6 caractères")
+        else:
+            if change_user_password(st.session_state.username, new_pwd):
+                st.success("✅ Mot de passe modifié avec succès !")
+            else:
+                st.error("Erreur lors de la modification")
+    
+    st.markdown("---")
+    st.markdown("### 👤 Changer le Nom d'Utilisateur")
+    
+    new_username = st.text_input("Nouveau nom d'utilisateur", key="new_username_input")
+    confirm_pwd = st.text_input("Mot de passe pour confirmer", type="password", key="confirm_pwd_username")
+    
+    if st.button("Modifier le nom d'utilisateur"):
+        if not new_username or not confirm_pwd:
+            st.error("Veuillez remplir tous les champs")
+        elif not verify_user(st.session_state.username, confirm_pwd):
+            st.error("Mot de passe incorrect")
+        elif new_username == st.session_state.username:
+            st.error("Le nouveau nom est identique à l'ancien")
+        else:
+            success, message = change_username(st.session_state.username, new_username)
+            if success:
+                st.success(f"✅ {message}")
+                st.info(f"Votre nouveau nom d'utilisateur : **{new_username}**")
+                # Mettre à jour la session
+                st.session_state.username = new_username
+                st.rerun()
+            else:
+                st.error(f"❌ {message}")
 
 st.sidebar.markdown("---")
 st.sidebar.title("🏢 Gestion Multi-Restaurants")
