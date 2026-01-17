@@ -31,7 +31,7 @@ if not os.path.exists(DATA_DIR):
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-def save_user_credentials(username, password, restaurant_info):
+def save_user_credentials(username, password, restaurant_info, approved=False):
     users_file = os.path.join(DATA_DIR, "users.pkl")
     
     if os.path.exists(users_file):
@@ -42,7 +42,9 @@ def save_user_credentials(username, password, restaurant_info):
     
     users[username] = {
         'password_hash': hash_password(password),
-        'restaurant_info': restaurant_info
+        'restaurant_info': restaurant_info,
+        'approved': approved,
+        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
     
     with open(users_file, 'wb') as f:
@@ -61,6 +63,48 @@ def verify_user(username, password):
         return False
     
     return users[username]['password_hash'] == hash_password(password)
+
+def is_user_approved(username):
+    """Vérifier si un utilisateur est approuvé par l'admin"""
+    users_file = os.path.join(DATA_DIR, "users.pkl")
+    
+    if not os.path.exists(users_file):
+        return False
+    
+    with open(users_file, 'rb') as f:
+        users = pickle.load(f)
+    
+    if username not in users:
+        return False
+    
+    # Par défaut, considérer comme approuvé si le champ n'existe pas (rétrocompatibilité)
+    return users[username].get('approved', True)
+
+def approve_user(username):
+    """Approuver un utilisateur (admin seulement)"""
+    users_file = os.path.join(DATA_DIR, "users.pkl")
+    
+    if not os.path.exists(users_file):
+        return False, "Fichier utilisateurs introuvable"
+    
+    with open(users_file, 'rb') as f:
+        users = pickle.load(f)
+    
+    if username not in users:
+        return False, "Utilisateur introuvable"
+    
+    users[username]['approved'] = True
+    users[username]['approved_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    with open(users_file, 'wb') as f:
+        pickle.dump(users, f)
+    
+    return True, f"Utilisateur '{username}' approuvé avec succès"
+
+def reject_user(username):
+    """Rejeter et supprimer un utilisateur (admin seulement)"""
+    # Utilise la même fonction que delete_user_account
+    return delete_user_account(username)
 
 def get_user_restaurant_info(username):
     users_file = os.path.join(DATA_DIR, "users.pkl")
@@ -191,7 +235,9 @@ def get_all_users_stats():
             'Utilisateur': username,
             'Nombre de Restaurants': nb_restaurants,
             'Ville Principale': user_data['restaurant_info'].get('city', 'N/A'),
-            'Date Inscription': datetime.now().strftime('%Y-%m-%d')  # À améliorer avec vraie date
+            'Date Inscription': user_data.get('created_at', 'N/A'),
+            'Statut': '✅ Approuvé' if user_data.get('approved', True) else '⏳ En attente',
+            'Approuvé': user_data.get('approved', True)
         })
     
     return stats
@@ -557,13 +603,19 @@ if not st.session_state.logged_in:
         
         if st.button("Se connecter"):
             if verify_user(login_username, login_password):
-                st.session_state.logged_in = True
-                st.session_state.username = login_username
-                st.session_state.restaurants = load_restaurant_data(login_username)
-                if st.session_state.restaurants:
-                    st.session_state.current_restaurant = list(st.session_state.restaurants.keys())[0]
-                st.success(f"Bienvenue {login_username} !")
-                st.rerun()
+                # Vérifier si le compte est approuvé
+                if not is_user_approved(login_username):
+                    st.warning("⏳ **Compte en attente d'approbation**")
+                    st.info("Votre compte a été créé avec succès mais est en attente de validation par l'administrateur.")
+                    st.info("📧 Vous serez notifié dès que votre compte sera approuvé. Merci de votre patience !")
+                else:
+                    st.session_state.logged_in = True
+                    st.session_state.username = login_username
+                    st.session_state.restaurants = load_restaurant_data(login_username)
+                    if st.session_state.restaurants:
+                        st.session_state.current_restaurant = list(st.session_state.restaurants.keys())[0]
+                    st.success(f"Bienvenue {login_username} !")
+                    st.rerun()
             else:
                 st.error("Nom d'utilisateur ou mot de passe incorrect")
     
@@ -613,7 +665,9 @@ if not st.session_state.logged_in:
                         }
                         save_restaurant_data(new_username, initial_data)
                         
-                        st.success("Compte créé avec succès ! Vous pouvez maintenant vous connecter.")
+                        st.success("✅ Compte créé avec succès !")
+                        st.warning("⏳ **Votre compte est en attente d'approbation par l'administrateur**")
+                        st.info("📧 Vous recevrez une notification dès que votre compte sera validé. Vous pourrez alors vous connecter et utiliser l'application.")
                 else:
                     restaurant_info = {
                         'name': resto_name,
@@ -633,7 +687,9 @@ if not st.session_state.logged_in:
                     }
                     save_restaurant_data(new_username, initial_data)
                     
-                    st.success("Compte créé avec succès ! Vous pouvez maintenant vous connecter.")
+                    st.success("✅ Compte créé avec succès !")
+                    st.warning("⏳ **Votre compte est en attente d'approbation par l'administrateur**")
+                    st.info("📧 Vous recevrez une notification dès que votre compte sera validé. Vous pourrez alors vous connecter et utiliser l'application.")
     
     with tab3:
         st.subheader("🔐 Administration")
@@ -711,6 +767,65 @@ if st.session_state.is_admin:
             st.metric("⭐ Enterprise (4+)", users_enterprise)
         
         st.markdown("---")
+        
+        # Section Comptes en Attente
+        pending_users = df_users[df_users['Approuvé'] == False]
+        
+        if len(pending_users) > 0:
+            st.subheader(f"⏳ Comptes en Attente d'Approbation ({len(pending_users)})")
+            st.warning(f"**{len(pending_users)} nouveau(x) compte(s)** nécessite(nt) votre validation avant d'accéder à l'application.")
+            
+            for idx, user in pending_users.iterrows():
+                with st.expander(f"🔔 {user['Utilisateur']} - {user['Ville Principale']}", expanded=True):
+                    col_info1, col_info2 = st.columns(2)
+                    
+                    with col_info1:
+                        st.write(f"**Nom d'utilisateur** : {user['Utilisateur']}")
+                        st.write(f"**Restaurant** : {user['Ville Principale']}")
+                        st.write(f"**Date d'inscription** : {user['Date Inscription']}")
+                    
+                    with col_info2:
+                        st.write(f"**Nombre de restaurants** : {user['Nombre de Restaurants']}")
+                        st.write(f"**Plan prévu** : {user['Plan']}")
+                        st.write(f"**Facture** : {user['Facture (€)']} €/mois")
+                    
+                    st.markdown("---")
+                    
+                    col_action1, col_action2, col_action3 = st.columns([1, 1, 2])
+                    
+                    with col_action1:
+                        if st.button(f"✅ Approuver", key=f"approve_{user['Utilisateur']}", type="primary", use_container_width=True):
+                            success, message = approve_user(user['Utilisateur'])
+                            if success:
+                                st.success(f"✅ {message}")
+                                st.balloons()
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {message}")
+                    
+                    with col_action2:
+                        if st.button(f"❌ Rejeter", key=f"reject_{user['Utilisateur']}", type="secondary", use_container_width=True):
+                            st.session_state[f'confirm_reject_{user["Utilisateur"]}'] = True
+                    
+                    # Confirmation de rejet
+                    if st.session_state.get(f'confirm_reject_{user["Utilisateur"]}'):
+                        st.error(f"⚠️ Confirmer le rejet de **{user['Utilisateur']}** ? Cette action supprimera définitivement le compte.")
+                        col_confirm1, col_confirm2 = st.columns(2)
+                        with col_confirm1:
+                            if st.button(f"Confirmer le rejet", key=f"confirm_reject_btn_{user['Utilisateur']}", type="primary"):
+                                success, message = reject_user(user['Utilisateur'])
+                                if success:
+                                    st.success(f"✅ {message}")
+                                    st.session_state[f'confirm_reject_{user["Utilisateur"]}'] = False
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ {message}")
+                        with col_confirm2:
+                            if st.button(f"Annuler", key=f"cancel_reject_{user['Utilisateur']}"):
+                                st.session_state[f'confirm_reject_{user["Utilisateur"]}'] = False
+                                st.rerun()
+        
+        st.markdown("---")
         st.subheader("📊 Liste des Utilisateurs")
         
         df_users['Facture (€)'] = df_users['Nombre de Restaurants'].apply(calculate_invoice)
@@ -719,7 +834,7 @@ if st.session_state.is_admin:
         )
         
         st.dataframe(
-            df_users[['Utilisateur', 'Nombre de Restaurants', 'Plan', 'Facture (€)', 'Ville Principale', 'Date Inscription']],
+            df_users[['Utilisateur', 'Statut', 'Nombre de Restaurants', 'Plan', 'Facture (€)', 'Ville Principale', 'Date Inscription']],
             use_container_width=True,
             hide_index=True
         )
