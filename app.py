@@ -768,6 +768,12 @@ if st.session_state.is_admin:
         
         st.markdown("---")
         
+        # Calculer les factures et plans AVANT de filtrer
+        df_users['Facture (€)'] = df_users['Nombre de Restaurants'].apply(calculate_invoice)
+        df_users['Plan'] = df_users['Nombre de Restaurants'].apply(
+            lambda x: "Standard (49€)" if x <= 3 else "Enterprise (149€)"
+        )
+        
         # Section Comptes en Attente
         pending_users = df_users[df_users['Approuvé'] == False]
         
@@ -827,11 +833,6 @@ if st.session_state.is_admin:
         
         st.markdown("---")
         st.subheader("📊 Liste des Utilisateurs")
-        
-        df_users['Facture (€)'] = df_users['Nombre de Restaurants'].apply(calculate_invoice)
-        df_users['Plan'] = df_users['Nombre de Restaurants'].apply(
-            lambda x: "Standard (49€)" if x <= 3 else "Enterprise (149€)"
-        )
         
         st.dataframe(
             df_users[['Utilisateur', 'Statut', 'Nombre de Restaurants', 'Plan', 'Facture (€)', 'Ville Principale', 'Date Inscription']],
