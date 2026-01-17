@@ -23,6 +23,7 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="Assistant Préparation Restaurant Pro", page_icon="🍽️", layout="wide")
 
 DATA_DIR = "restaurant_data"
+ADMIN_PASSWORD_HASH = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"  # "admin"
 
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
@@ -86,9 +87,44 @@ def load_restaurant_data(username):
             return {}
     return {}
 
+def get_all_users_stats():
+    """Fonction admin: récupère les stats de tous les utilisateurs"""
+    users_file = os.path.join(DATA_DIR, "users.pkl")
+    
+    if not os.path.exists(users_file):
+        return []
+    
+    with open(users_file, 'rb') as f:
+        users = pickle.load(f)
+    
+    stats = []
+    for username, user_data in users.items():
+        user_restaurants = load_restaurant_data(username)
+        nb_restaurants = len(user_restaurants)
+        
+        stats.append({
+            'Utilisateur': username,
+            'Nombre de Restaurants': nb_restaurants,
+            'Ville Principale': user_data['restaurant_info'].get('city', 'N/A'),
+            'Date Inscription': datetime.now().strftime('%Y-%m-%d')  # À améliorer avec vraie date
+        })
+    
+    return stats
+
+def calculate_invoice(nb_restaurants, price_per_restaurant=49.0):
+    """Calcule la facture basée sur le nombre de restaurants"""
+    if nb_restaurants <= 1:
+        return 0.0  # Gratuit pour 1 restaurant
+    elif nb_restaurants <= 3:
+        return price_per_restaurant  # Plan Pro: 49€
+    else:
+        return 149.0  # Plan Enterprise: 149€
+
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.username = None
+if 'is_admin' not in st.session_state:
+    st.session_state.is_admin = False
 
 if 'restaurants' not in st.session_state:
     st.session_state.restaurants = {}
@@ -429,7 +465,7 @@ if not st.session_state.logged_in:
     st.title("🍽️ Assistant de Préparation Restaurant Pro")
     st.markdown("### Connexion / Inscription")
     
-    tab1, tab2 = st.tabs(["Se connecter", "Créer un compte"])
+    tab1, tab2, tab3 = st.tabs(["Se connecter", "Créer un compte", "🔐 Admin"])
     
     with tab1:
         st.subheader("Connexion")
@@ -515,6 +551,153 @@ if not st.session_state.logged_in:
                     save_restaurant_data(new_username, initial_data)
                     
                     st.success("Compte créé avec succès ! Vous pouvez maintenant vous connecter.")
+    
+    with tab3:
+        st.subheader("🔐 Administration")
+        st.info("Accès réservé au propriétaire de l'application")
+        
+        admin_password = st.text_input("Mot de passe administrateur", type="password", key="admin_password")
+        
+        if st.button("Connexion Admin"):
+            if hash_password(admin_password) == ADMIN_PASSWORD_HASH:
+                st.session_state.logged_in = True
+                st.session_state.is_admin = True
+                st.session_state.username = "ADMIN"
+                st.success("🔓 Accès administrateur accordé")
+                st.rerun()
+            else:
+                st.error("❌ Mot de passe administrateur incorrect")
+    
+    st.stop()
+
+if st.session_state.is_admin:
+    st.title("🔐 Tableau de Bord Administrateur")
+    st.markdown("---")
+    
+    if st.sidebar.button("🚪 Déconnexion Admin"):
+        st.session_state.logged_in = False
+        st.session_state.is_admin = False
+        st.session_state.username = None
+        st.rerun()
+    
+    users_stats = get_all_users_stats()
+    
+    if users_stats:
+        df_users = pd.DataFrame(users_stats)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("👥 Total Utilisateurs", len(df_users))
+        with col2:
+            total_restaurants = df_users['Nombre de Restaurants'].sum()
+            st.metric("🏢 Total Restaurants", total_restaurants)
+        with col3:
+            users_paying = len(df_users[df_users['Nombre de Restaurants'] > 1])
+            st.metric("💰 Clients Payants", users_paying)
+        with col4:
+            users_free = len(df_users[df_users['Nombre de Restaurants'] <= 1])
+            st.metric("🆓 Gratuits", users_free)
+        
+        st.markdown("---")
+        st.subheader("📊 Liste des Utilisateurs")
+        
+        df_users['Facture (€)'] = df_users['Nombre de Restaurants'].apply(calculate_invoice)
+        df_users['Plan'] = df_users['Nombre de Restaurants'].apply(
+            lambda x: "Gratuit" if x <= 1 else ("Pro (49€)" if x <= 3 else "Enterprise (149€)")
+        )
+        
+        st.dataframe(
+            df_users[['Utilisateur', 'Nombre de Restaurants', 'Plan', 'Facture (€)', 'Ville Principale', 'Date Inscription']],
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        st.markdown("---")
+        st.subheader("💰 Analyse de Facturation")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            total_revenue = df_users['Facture (€)'].sum()
+            st.metric("💵 Revenu Mensuel Total", f"{total_revenue:.2f} €")
+            
+            mrr_projection = total_revenue * 12
+            st.metric("📈 Projection Annuelle (MRR x12)", f"{mrr_projection:.2f} €")
+        
+        with col2:
+            fig_plans = px.pie(
+                df_users,
+                names='Plan',
+                title="Répartition des Plans"
+            )
+            st.plotly_chart(fig_plans, use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("📥 Export des Données")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            csv_export = df_users.to_csv(index=False)
+            st.download_button(
+                label="⬇️ Télécharger CSV",
+                data=csv_export,
+                file_name=f"facturation_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+        
+        with col2:
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_users.to_excel(writer, index=False, sheet_name='Facturation')
+            
+            st.download_button(
+                label="⬇️ Télécharger Excel",
+                data=buffer.getvalue(),
+                file_name=f"facturation_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        
+        st.markdown("---")
+        st.subheader("📈 Détails par Utilisateur")
+        
+        selected_user = st.selectbox("Sélectionner un utilisateur", df_users['Utilisateur'].tolist())
+        
+        if selected_user:
+            user_restaurants = load_restaurant_data(selected_user)
+            
+            st.markdown(f"#### Restaurants de **{selected_user}**")
+            
+            if user_restaurants:
+                resto_list = []
+                for resto_name, resto_data in user_restaurants.items():
+                    resto_list.append({
+                        'Restaurant': resto_name,
+                        'Ville': resto_data.get('city', 'N/A'),
+                        'Coût/portion': f"{resto_data.get('cost_per_portion', 0)}€",
+                        'Données': "✅ Oui" if resto_data.get('data') is not None else "❌ Non"
+                    })
+                
+                df_restos = pd.DataFrame(resto_list)
+                st.dataframe(df_restos, use_container_width=True, hide_index=True)
+                
+                nb_restos = len(user_restaurants)
+                facture = calculate_invoice(nb_restos)
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("🏢 Nombre de Restaurants", nb_restos)
+                with col2:
+                    plan = "Gratuit" if nb_restos <= 1 else ("Pro" if nb_restos <= 3 else "Enterprise")
+                    st.metric("📋 Plan", plan)
+                with col3:
+                    st.metric("💰 Facture Mensuelle", f"{facture} €")
+            else:
+                st.info("Aucun restaurant pour cet utilisateur")
+    
+    else:
+        st.info("Aucun utilisateur enregistré pour le moment")
     
     st.stop()
 
