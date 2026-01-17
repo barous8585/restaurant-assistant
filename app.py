@@ -49,7 +49,7 @@ if 'restaurants' not in st.session_state:
 if 'recipes' not in st.session_state:
     st.session_state.recipes = {}
 
-WEATHER_API_KEY = "demo"
+WEATHER_API_KEY = "915efd1a1b7e46fb98b121706261701"
 
 def get_weather_forecast(city="Paris", days=7):
     try:
