@@ -16,36 +16,84 @@ import json
 import requests
 import pickle
 import os
+import hashlib
 
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="Assistant Préparation Restaurant Pro", page_icon="🍽️", layout="wide")
 
-DATA_FILE = "restaurants_data.pkl"
+DATA_DIR = "restaurant_data"
 
-def save_restaurants_data():
-    with open(DATA_FILE, 'wb') as f:
-        data_to_save = {
-            'restaurants': st.session_state.restaurants,
-            'current_restaurant': st.session_state.current_restaurant
-        }
-        pickle.dump(data_to_save, f)
+if not os.path.exists(DATA_DIR):
+    os.makedirs(DATA_DIR)
 
-def load_restaurants_data():
-    if os.path.exists(DATA_FILE):
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def save_user_credentials(username, password, restaurant_info):
+    users_file = os.path.join(DATA_DIR, "users.pkl")
+    
+    if os.path.exists(users_file):
+        with open(users_file, 'rb') as f:
+            users = pickle.load(f)
+    else:
+        users = {}
+    
+    users[username] = {
+        'password_hash': hash_password(password),
+        'restaurant_info': restaurant_info
+    }
+    
+    with open(users_file, 'wb') as f:
+        pickle.dump(users, f)
+
+def verify_user(username, password):
+    users_file = os.path.join(DATA_DIR, "users.pkl")
+    
+    if not os.path.exists(users_file):
+        return False
+    
+    with open(users_file, 'rb') as f:
+        users = pickle.load(f)
+    
+    if username not in users:
+        return False
+    
+    return users[username]['password_hash'] == hash_password(password)
+
+def get_user_restaurant_info(username):
+    users_file = os.path.join(DATA_DIR, "users.pkl")
+    
+    with open(users_file, 'rb') as f:
+        users = pickle.load(f)
+    
+    return users[username]['restaurant_info']
+
+def save_restaurant_data(username, restaurants_data):
+    user_data_file = os.path.join(DATA_DIR, f"{username}_data.pkl")
+    
+    with open(user_data_file, 'wb') as f:
+        pickle.dump(restaurants_data, f)
+
+def load_restaurant_data(username):
+    user_data_file = os.path.join(DATA_DIR, f"{username}_data.pkl")
+    
+    if os.path.exists(user_data_file):
         try:
-            with open(DATA_FILE, 'rb') as f:
-                data = pickle.load(f)
-                return data.get('restaurants', {}), data.get('current_restaurant', None)
+            with open(user_data_file, 'rb') as f:
+                return pickle.load(f)
         except:
-            return {}, None
-    return {}, None
+            return {}
+    return {}
+
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.username = None
 
 if 'restaurants' not in st.session_state:
-    loaded_restaurants, loaded_current = load_restaurants_data()
-    st.session_state.restaurants = loaded_restaurants
-    st.session_state.current_restaurant = loaded_current
-    
+    st.session_state.restaurants = {}
+if 'current_restaurant' not in st.session_state:
+    st.session_state.current_restaurant = None
 if 'recipes' not in st.session_state:
     st.session_state.recipes = {}
 
@@ -377,6 +425,110 @@ def predict_sales_ml(df, plat, jours_prevision=7):
     
     return pred_df, model_metrics, best_name
 
+if not st.session_state.logged_in:
+    st.title("🍽️ Assistant de Préparation Restaurant Pro")
+    st.markdown("### Connexion / Inscription")
+    
+    tab1, tab2 = st.tabs(["Se connecter", "Créer un compte"])
+    
+    with tab1:
+        st.subheader("Connexion")
+        login_username = st.text_input("Nom d'utilisateur", key="login_username")
+        login_password = st.text_input("Mot de passe", type="password", key="login_password")
+        
+        if st.button("Se connecter"):
+            if verify_user(login_username, login_password):
+                st.session_state.logged_in = True
+                st.session_state.username = login_username
+                st.session_state.restaurants = load_restaurant_data(login_username)
+                if st.session_state.restaurants:
+                    st.session_state.current_restaurant = list(st.session_state.restaurants.keys())[0]
+                st.success(f"Bienvenue {login_username} !")
+                st.rerun()
+            else:
+                st.error("Nom d'utilisateur ou mot de passe incorrect")
+    
+    with tab2:
+        st.subheader("Créer un compte")
+        new_username = st.text_input("Nom d'utilisateur", key="new_username")
+        new_password = st.text_input("Mot de passe", type="password", key="new_password")
+        new_password_confirm = st.text_input("Confirmer le mot de passe", type="password", key="new_password_confirm")
+        
+        st.markdown("#### Informations du restaurant")
+        resto_name = st.text_input("Nom du restaurant")
+        resto_city = st.text_input("Ville", value="Paris")
+        avg_portion_cost = st.number_input("Coût moyen par portion (€)", min_value=0.0, value=3.5, step=0.1)
+        
+        if st.button("Créer le compte"):
+            if not new_username or not new_password:
+                st.error("Veuillez remplir tous les champs")
+            elif new_password != new_password_confirm:
+                st.error("Les mots de passe ne correspondent pas")
+            elif len(new_password) < 6:
+                st.error("Le mot de passe doit contenir au moins 6 caractères")
+            elif not resto_name:
+                st.error("Veuillez renseigner le nom du restaurant")
+            else:
+                users_file = os.path.join(DATA_DIR, "users.pkl")
+                if os.path.exists(users_file):
+                    with open(users_file, 'rb') as f:
+                        users = pickle.load(f)
+                    if new_username in users:
+                        st.error("Ce nom d'utilisateur existe déjà")
+                    else:
+                        restaurant_info = {
+                            'name': resto_name,
+                            'city': resto_city,
+                            'cost_per_portion': avg_portion_cost
+                        }
+                        save_user_credentials(new_username, new_password, restaurant_info)
+                        
+                        initial_data = {
+                            resto_name: {
+                                'name': resto_name,
+                                'city': resto_city,
+                                'cost_per_portion': avg_portion_cost,
+                                'data': None,
+                                'recipes': {}
+                            }
+                        }
+                        save_restaurant_data(new_username, initial_data)
+                        
+                        st.success("Compte créé avec succès ! Vous pouvez maintenant vous connecter.")
+                else:
+                    restaurant_info = {
+                        'name': resto_name,
+                        'city': resto_city,
+                        'cost_per_portion': avg_portion_cost
+                    }
+                    save_user_credentials(new_username, new_password, restaurant_info)
+                    
+                    initial_data = {
+                        resto_name: {
+                            'name': resto_name,
+                            'city': resto_city,
+                            'cost_per_portion': avg_portion_cost,
+                            'data': None,
+                            'recipes': {}
+                        }
+                    }
+                    save_restaurant_data(new_username, initial_data)
+                    
+                    st.success("Compte créé avec succès ! Vous pouvez maintenant vous connecter.")
+    
+    st.stop()
+
+st.sidebar.title(f"👤 {st.session_state.username}")
+
+if st.sidebar.button("🚪 Se déconnecter"):
+    save_restaurant_data(st.session_state.username, st.session_state.restaurants)
+    st.session_state.logged_in = False
+    st.session_state.username = None
+    st.session_state.restaurants = {}
+    st.session_state.current_restaurant = None
+    st.rerun()
+
+st.sidebar.markdown("---")
 st.sidebar.title("🏢 Gestion Multi-Restaurants")
 
 with st.sidebar.expander("➕ Ajouter un restaurant", expanded=len(st.session_state.restaurants) == 0):
@@ -394,7 +546,7 @@ with st.sidebar.expander("➕ Ajouter un restaurant", expanded=len(st.session_st
                 'recipes': {}
             }
             st.session_state.current_restaurant = resto_name
-            save_restaurants_data()
+            save_restaurant_data(st.session_state.username, st.session_state.restaurants)
             st.success(f"✅ Restaurant '{resto_name}' créé !")
             st.rerun()
 
@@ -408,7 +560,7 @@ if st.session_state.restaurants:
     
     if selected_resto != st.session_state.current_restaurant:
         st.session_state.current_restaurant = selected_resto
-        save_restaurants_data()
+        save_restaurant_data(st.session_state.username, st.session_state.restaurants)
     
     current_resto_data = st.session_state.restaurants[selected_resto]
     
@@ -421,7 +573,7 @@ if st.session_state.restaurants:
             st.session_state.current_restaurant = list(st.session_state.restaurants.keys())[0]
         else:
             st.session_state.current_restaurant = None
-        save_restaurants_data()
+        save_restaurant_data(st.session_state.username, st.session_state.restaurants)
         st.rerun()
 
 if not st.session_state.current_restaurant:
@@ -445,7 +597,7 @@ if uploaded_file is not None:
         df = load_file(uploaded_file)
         if df is not None:
             st.session_state.restaurants[st.session_state.current_restaurant]['data'] = df
-            save_restaurants_data()
+            save_restaurant_data(st.session_state.username, st.session_state.restaurants)
 
 current_resto_data = st.session_state.restaurants[st.session_state.current_restaurant]
 df = current_resto_data.get('data')
@@ -867,7 +1019,7 @@ if df is not None:
                             st.session_state.restaurants[st.session_state.current_restaurant]['recipes'] = {}
                         
                         st.session_state.restaurants[st.session_state.current_restaurant]['recipes'][plat_recipe] = ingredients
-                        save_restaurants_data()
+                        save_restaurant_data(st.session_state.username, st.session_state.restaurants)
                         st.success(f"✅ Recette '{plat_recipe}' sauvegardée !")
                         st.rerun()
             
@@ -989,7 +1141,6 @@ if df is not None:
                 
             else:
                 st.warning("⚠️ Impossible de récupérer les données météo. Vérifiez votre connexion internet.")
-                st.info("💡 Pour activer les prévisions météo réelles, configurez une clé API WeatherAPI dans le code (gratuit sur weatherapi.com)")
 
 else:
     st.info("👈 Importez vos données de ventes pour commencer")
@@ -1045,5 +1196,5 @@ else:
     - **Auto-sélection**: Le meilleur modèle est choisi automatiquement
     - **Météo IA**: Impact automatique des conditions météo sur les prévisions
     - **Multi-restaurants**: Gérez plusieurs établissements depuis une interface
-    - **💾 Sauvegarde Automatique**: Toutes vos données sont préservées entre les sessions
+    - **🔒 Sécurité**: Authentification et données privées par utilisateur
     """)
