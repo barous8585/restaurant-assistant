@@ -452,6 +452,9 @@ def calculate_waste_savings(df, predictions):
     monthly_savings = daily_savings * 30
     
     return {
+        'daily_waste_traditional': daily_waste_traditional,
+        'daily_waste_ml': daily_waste_ml,
+        'daily_savings': daily_savings,
         'waste_traditional': monthly_waste_traditional,
         'waste_ml': monthly_waste_ml,
         'savings_portions': monthly_savings,
@@ -1397,19 +1400,20 @@ if df is not None:
                         )
                     
                     with col3:
-                        savings_amount = savings_data['savings_portions'] * cost_per_portion
+                        monthly_savings_portions = savings_data['savings_portions']
+                        monthly_savings = monthly_savings_portions * cost_per_portion
                         st.metric(
-                            "💚 Économies Réalisées",
-                            f"{savings_amount:.0f}€",
+                            "💚 Économies Mensuelles",
+                            f"{monthly_savings:.0f}€",
                             delta=f"{savings_data['reduction_percent']:.1f}% de réduction"
                         )
                     
                     with col4:
-                        monthly_savings = (savings_amount / analysis_days) * 30
+                        annual_savings = monthly_savings * 12
                         st.metric(
-                            "📅 Économies Mensuelles",
-                            f"{monthly_savings:.0f}€",
-                            delta=f"{monthly_savings * 12:.0f}€/an"
+                            "📅 Économies Annuelles",
+                            f"{annual_savings:.0f}€",
+                            delta=f"{monthly_savings_portions:.0f} portions/mois économisées"
                         )
                     
                     st.markdown("---")
@@ -1432,7 +1436,7 @@ if df is not None:
                             y=comparison_data['Gaspillage (€)'],
                             marker_color=['#ff6b6b', '#51cf66']
                         ))
-                        fig_comparison.update_layout(title=f"Économies sur {analysis_days} jours")
+                        fig_comparison.update_layout(title=f"Économies Mensuelles (30 jours)")
                         st.plotly_chart(fig_comparison, use_container_width=True)
                     
                     with col2:
@@ -1446,10 +1450,17 @@ if df is not None:
                         )
                         
                         roi = ((monthly_savings - subscription_cost) / subscription_cost * 100) if subscription_cost > 0 else 0
-                        payback_days = (subscription_cost / (savings_amount / analysis_days)) if savings_amount > 0 else 0
+                        daily_savings_amount = savings_data['daily_savings'] * cost_per_portion
+                        payback_days = (subscription_cost / daily_savings_amount) if daily_savings_amount > 0 else 0
+                        
+                        if payback_days < 1 and payback_days > 0:
+                            payback_hours = payback_days * 24
+                            payback_display = f"{payback_hours:.0f} heures"
+                        else:
+                            payback_display = f"{payback_days:.0f} jours"
                         
                         st.metric("💎 ROI Mensuel", f"{roi:.0f}%")
-                        st.metric("⏱️ Retour sur Investissement", f"{payback_days:.0f} jours")
+                        st.metric("⏱️ Retour sur Investissement", payback_display)
                         
                         net_monthly_benefit = monthly_savings - subscription_cost
                         st.metric("💰 Bénéfice Net Mensuel", f"{net_monthly_benefit:.0f}€")
