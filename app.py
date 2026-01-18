@@ -416,38 +416,46 @@ def create_features(df):
     return df
 
 def calculate_waste_savings(df, predictions):
-    if df is None or predictions is None or len(df) == 0:
+    if df is None or predictions is None or len(df) == 0 or len(predictions) == 0:
         return None
     
     df_temp = df.copy()
     df_temp['Date'] = pd.to_datetime(df_temp['Date'])
     daily_sales = df_temp.groupby('Date')['Quantite'].sum()
     
+    # Statistiques des ventes réelles
     avg_daily_sales = daily_sales.mean()
     std_daily_sales = daily_sales.std()
     
-    traditional_prep = avg_daily_sales + (std_daily_sales * 1.5)
+    # Méthode traditionnelle : sur-préparer pour éviter les ruptures
+    # On prépare moyenne + 20% de marge de sécurité
+    traditional_prep_factor = 1.20
     
-    total_waste_traditional = 0
-    total_waste_ml = 0
+    # Méthode ML : prédictions précises + petite marge de 5%
+    ml_prep_factor = 1.05
     
-    for _, pred_row in predictions.iterrows():
-        pred_qty = pred_row['Quantite_Prevue']
-        actual_avg = avg_daily_sales
-        
-        waste_traditional = max(0, traditional_prep - actual_avg)
-        waste_ml = max(0, pred_qty - actual_avg) * 0.3
-        
-        total_waste_traditional += waste_traditional
-        total_waste_ml += waste_ml
+    # Calcul du gaspillage MOYEN PAR JOUR (pas cumulé)
+    avg_pred = predictions['Quantite_Prevue'].mean()
     
-    savings = total_waste_traditional - total_waste_ml
+    # Gaspillage traditionnel par jour
+    daily_waste_traditional = max(0, (avg_daily_sales * traditional_prep_factor) - avg_daily_sales)
+    
+    # Gaspillage ML par jour (beaucoup plus faible)
+    daily_waste_ml = max(0, (avg_pred * ml_prep_factor) - avg_pred)
+    
+    # Économies par jour
+    daily_savings = daily_waste_traditional - daily_waste_ml
+    
+    # Projections mensuelles (30 jours)
+    monthly_waste_traditional = daily_waste_traditional * 30
+    monthly_waste_ml = daily_waste_ml * 30
+    monthly_savings = daily_savings * 30
     
     return {
-        'waste_traditional': total_waste_traditional,
-        'waste_ml': total_waste_ml,
-        'savings_portions': savings,
-        'reduction_percent': (savings / total_waste_traditional * 100) if total_waste_traditional > 0 else 0
+        'waste_traditional': monthly_waste_traditional,
+        'waste_ml': monthly_waste_ml,
+        'savings_portions': monthly_savings,
+        'reduction_percent': (monthly_savings / monthly_waste_traditional * 100) if monthly_waste_traditional > 0 else 0
     }
 
 def predict_sales_ml(df, plat, jours_prevision=7):
