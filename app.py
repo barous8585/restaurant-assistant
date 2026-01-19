@@ -1900,15 +1900,17 @@ if df is not None:
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                st.metric("📊 Ventes Aujourd'hui", f"{int(total_today)} portions")
+                st.metric("📊 Ventes Aujourd'hui", f"{max(0, int(total_today))} portions")
             
             with col2:
                 weather_icon = "☀️" if adjustments['weather_factor'] > 1 else ("🌧️" if adjustments['weather_factor'] < 0.95 else "☁️")
-                st.metric(f"{weather_icon} Impact Météo", f"{int((adjustments['weather_factor'] - 1) * 100):+d}%")
+                impact_pct = int((adjustments['weather_factor'] - 1) * 100)
+                st.metric(f"{weather_icon} Impact Météo", f"{impact_pct:+d}%")
             
             with col3:
                 trend_icon = "📈" if adjustments['sales_trend_factor'] > 1 else ("📉" if adjustments['sales_trend_factor'] < 1 else "➡️")
-                st.metric(f"{trend_icon} Tendance Ventes", f"{int((adjustments['sales_trend_factor'] - 1) * 100):+d}%")
+                trend_pct = int((adjustments['sales_trend_factor'] - 1) * 100)
+                st.metric(f"{trend_icon} Tendance Ventes", f"{trend_pct:+d}%")
             
             if adjustments['recommendations']:
                 st.markdown("### 💡 Recommandations Temps Réel")
@@ -2047,38 +2049,46 @@ if df is not None:
                     plat_data = df[df['Plat'] == plat_overview].copy()
                     plat_data['Date'] = pd.to_datetime(plat_data['Date'])
                     
-                    daily_avg = plat_data.groupby('Date')['Quantite'].sum().mean()
-                    
-                    adjusted_total = daily_avg * adjustments['weather_factor'] * adjustments['sales_trend_factor']
-                    
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.metric("📊 Moyenne Journalière", f"{int(daily_avg)} portions")
-                    
-                    with col2:
-                        st.metric("🎯 Prévu Aujourd'hui (ajusté)", f"{int(adjusted_total)} portions")
-                    
-                    with col3:
-                        remaining = max(0, int(adjusted_total - total_today))
-                        st.metric("📦 Reste à Vendre", f"{remaining} portions")
-                    
-                    if current_time.hour < 14:
-                        dejeuner_portion = adjusted_total * 0.55
-                        diner_portion = adjusted_total * 0.45
+                    # Vérification données suffisantes
+                    if len(plat_data) == 0:
+                        st.warning(f"⚠️ Aucune donnée disponible pour {plat_overview}")
                     else:
-                        dejeuner_portion = total_today
-                        diner_portion = max(0, adjusted_total - total_today)
-                    
-                    st.markdown("#### 🍽️ Répartition Services")
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.info(f"☀️ **Déjeuner** : {int(dejeuner_portion)} portions")
-                    
-                    with col2:
-                        st.info(f"🌙 **Dîner** : {int(diner_portion)} portions")
+                        daily_avg = plat_data.groupby('Date')['Quantite'].sum().mean()
+                        
+                        # Vérification moyenne valide
+                        if pd.isna(daily_avg) or daily_avg <= 0:
+                            st.warning(f"⚠️ Données insuffisantes pour calculer les prédictions de {plat_overview}")
+                        else:
+                            adjusted_total = daily_avg * adjustments['weather_factor'] * adjustments['sales_trend_factor']
+                            
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.metric("📊 Moyenne Journalière", f"{int(daily_avg)} portions")
+                            
+                            with col2:
+                                st.metric("🎯 Prévu Aujourd'hui (ajusté)", f"{int(adjusted_total)} portions")
+                            
+                            with col3:
+                                remaining = max(0, int(adjusted_total - total_today))
+                                st.metric("📦 Reste à Vendre", f"{remaining} portions")
+                            
+                            if current_time.hour < 14:
+                                dejeuner_portion = adjusted_total * 0.55
+                                diner_portion = adjusted_total * 0.45
+                            else:
+                                dejeuner_portion = total_today
+                                diner_portion = max(0, adjusted_total - total_today)
+                            
+                            st.markdown("#### 🍽️ Répartition Services")
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.info(f"☀️ **Déjeuner** : {int(dejeuner_portion)} portions")
+                            
+                            with col2:
+                                st.info(f"🌙 **Dîner** : {int(diner_portion)} portions")
             
             if auto_refresh:
                 st.caption("🔄 Page se rafraîchit automatiquement toutes les 5 minutes")
