@@ -430,6 +430,16 @@ def calculate_missing_columns(df):
     """Calcule automatiquement les colonnes manquantes si possible"""
     df = df.copy()
     
+    # Création d'une colonne Date si absente mais Mois/Année disponibles
+    if 'Date' not in df.columns:
+        if 'Mois' in df.columns and 'Annee' in df.columns:
+            # Créer une date au 1er jour du mois
+            df['Date'] = pd.to_datetime(df['Annee'].astype(str) + '-' + df['Mois'].astype(str) + '-01', errors='coerce')
+        elif 'Mois' in df.columns:
+            # Si seulement Mois disponible, utiliser l'année en cours
+            current_year = datetime.now().year
+            df['Date'] = pd.to_datetime(str(current_year) + '-' + df['Mois'].astype(str) + '-01', errors='coerce')
+    
     # Calcul du chiffre d'affaires si manquant
     if 'Chiffre_affaires' not in df.columns and 'Prix_unitaire' in df.columns and 'Quantite' in df.columns:
         df['Chiffre_affaires'] = df['Prix_unitaire'] * df['Quantite']
@@ -1753,6 +1763,9 @@ if df is not None:
         with tab0:
             st.subheader("⚡ Prédictions en Temps Réel - Aujourd'hui")
             
+            # Initialisation auto_refresh (sera écrasé par le checkbox si affiché)
+            auto_refresh = False
+            
             current_time = datetime.now()
             st.info(f"🕐 **{current_time.strftime('%A %d %B %Y - %H:%M')}**")
             
@@ -1903,7 +1916,13 @@ if df is not None:
                 
                 st.markdown("### 📊 Vue d'Ensemble Journée")
                 
-                plat_overview = st.selectbox("Sélectionner un plat", plats_list, key="plat_overview")
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    plat_overview = st.selectbox("Sélectionner un plat", plats_list, key="plat_overview")
+                
+                with col2:
+                    auto_refresh = st.checkbox("🔄 Rafraîchir auto (5min)", value=False)
                 
                 if plat_overview:
                     plat_data = df[df['Plat'] == plat_overview].copy()
