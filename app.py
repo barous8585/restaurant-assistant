@@ -17,6 +17,7 @@ import requests
 import pickle
 import os
 import hashlib
+import time
 
 warnings.filterwarnings('ignore')
 
@@ -736,6 +737,210 @@ def predict_sales_ml(df, plat, jours_prevision=7):
     
     return pred_df, model_metrics, best_name
 
+def extract_hour_from_data(df):
+    """Extrait l'heure des données si disponible"""
+    if 'Heure' not in df.columns:
+        return df
+    
+    df = df.copy()
+    
+    try:
+        if df['Heure'].dtype == 'object':
+            df['Heure_parsed'] = pd.to_datetime(df['Heure'], format='%H:%M', errors='coerce').dt.hour
+        else:
+            df['Heure_parsed'] = pd.to_datetime(df['Heure'], errors='coerce').dt.hour
+        
+        df['Heure_parsed'] = df['Heure_parsed'].fillna(-1).astype(int)
+    except:
+        df['Heure_parsed'] = -1
+    
+    return df
+
+def get_hourly_pattern(df, plat):
+    """Analyse les patterns de vente horaires pour un plat"""
+    if 'Heure' not in df.columns:
+        return None
+    
+    df = extract_hour_from_data(df)
+    plat_data = df[df['Plat'] == plat].copy()
+    
+    if len(plat_data) == 0 or 'Heure_parsed' not in plat_data.columns:
+        return None
+    
+    plat_data = plat_data[plat_data['Heure_parsed'] >= 0]
+    
+    if len(plat_data) == 0:
+        return None
+    
+    hourly_stats = plat_data.groupby('Heure_parsed').agg({
+        'Quantite': ['mean', 'std', 'sum', 'count']
+    }).reset_index()
+    
+    hourly_stats.columns = ['Heure', 'Moyenne', 'Ecart_type', 'Total', 'Nb_occurences']
+    hourly_stats['Ecart_type'] = hourly_stats['Ecart_type'].fillna(0)
+    
+    return hourly_stats
+
+def predict_intraday_sales(df, plat, current_hour=None):
+    """Prédictions heure par heure pour aujourd'hui"""
+    if current_hour is None:
+        current_hour = datetime.now().hour
+    
+    hourly_pattern = get_hourly_pattern(df, plat)
+    
+    if hourly_pattern is None:
+        plat_data = df[df['Plat'] == plat].copy()
+        if len(plat_data) == 0:
+            return None
+        
+        daily_avg = plat_data.groupby('Date')['Quantite'].sum().mean()
+        
+        predictions = []
+        service_hours = {
+            'Déjeuner': list(range(11, 15)),
+            'Dîner': list(range(18, 23))
+        }
+        
+        for service, hours in service_hours.items():
+            for hour in hours:
+                if hour > current_hour:
+                    portion = daily_avg / len(service_hours['Déjeuner'] + service_hours['Dîner'])
+                    predictions.append({
+                        'Heure': f"{hour:02d}:00",
+                        'Service': service,
+                        'Quantite_prevue': int(portion),
+                        'Confiance': 'Faible',
+                        'Base': 'Moyenne journalière'
+                    })
+        
+        return pd.DataFrame(predictions) if predictions else None
+    
+    plat_data = df[df['Plat'] == plat].copy()
+    plat_data['Date'] = pd.to_datetime(plat_data['Date'])
+    plat_data = create_features(plat_data)
+    
+    today = datetime.now()
+    today_sales = plat_data[plat_data['Date'].dt.date == today.date()]
+    
+    sales_so_far = today_sales['Quantite'].sum() if len(today_sales) > 0 else 0
+    
+    is_weekend = today.weekday() in [5, 6]
+    
+    predictions = []
+    for _, row in hourly_pattern.iterrows():
+        hour = int(row['Heure'])
+        
+        if hour <= current_hour:
+            continue
+        
+        base_qty = row['Moyenne']
+        std = row['Ecart_type']
+        occurrences = row['Nb_occurences']
+        
+        weekend_factor = 1.15 if is_weekend else 1.0
+        
+        adjusted_qty = base_qty * weekend_factor
+        
+        if 11 <= hour <= 14:
+            service = 'Déjeuner'
+        elif 18 <= hour <= 22:
+            service = 'Dîner'
+        else:
+            service = 'Hors-service'
+        
+        if occurrences >= 5:
+            confiance = 'Élevée'
+        elif occurrences >= 3:
+            confiance = 'Moyenne'
+        else:
+            confiance = 'Faible'
+        
+        predictions.append({
+            'Heure': f"{hour:02d}:00",
+            'Service': service,
+            'Quantite_prevue': max(0, int(round(adjusted_qty))),
+            'Ecart_type': round(std, 1),
+            'Confiance': confiance,
+            'Base': f"{int(occurrences)} jours"
+        })
+    
+    pred_df = pd.DataFrame(predictions)
+    
+    if len(pred_df) > 0 and sales_so_far > 0:
+        pred_df['Note'] = f"📊 Déjà vendu aujourd'hui: {int(sales_so_far)} portions"
+    
+    return pred_df
+
+def get_realtime_adjustments(city, df, current_sales_today=0):
+    """Ajustements en temps réel basés sur météo et ventes actuelles"""
+    adjustments = {
+        'weather_factor': 1.0,
+        'sales_trend_factor': 1.0,
+        'recommendations': []
+    }
+    
+    weather_data = get_weather_forecast(city, 1)
+    
+    if weather_data and len(weather_data) > 0:
+        today_weather = weather_data[0]
+        condition = today_weather.get('condition', '').lower()
+        rain_chance = today_weather.get('rain_chance', 0)
+        temp = today_weather.get('temp_max', 20)
+        
+        if 'pluie' in condition or 'orage' in condition or rain_chance > 60:
+            adjustments['weather_factor'] = 0.85
+            adjustments['recommendations'].append("🌧️ Pluie prévue: -15% affluence attendue")
+        elif 'ensoleillé' in condition or 'soleil' in condition:
+            if temp > 25:
+                adjustments['weather_factor'] = 1.20
+                adjustments['recommendations'].append("☀️ Beau temps chaud: +20% affluence terrasse")
+            else:
+                adjustments['weather_factor'] = 1.10
+                adjustments['recommendations'].append("☀️ Beau temps: +10% affluence")
+        elif 'nuageux' in condition:
+            adjustments['weather_factor'] = 0.95
+            adjustments['recommendations'].append("☁️ Temps nuageux: -5% affluence")
+        
+        if temp > 28:
+            adjustments['recommendations'].append("🥗 Favoriser plats froids et salades (+25%)")
+        elif temp < 10:
+            adjustments['recommendations'].append("🍲 Favoriser soupes et plats chauds (+20%)")
+    
+    if df is not None and len(df) > 0:
+        df_temp = df.copy()
+        df_temp['Date'] = pd.to_datetime(df_temp['Date'])
+        
+        same_weekday = df_temp[df_temp['Date'].dt.dayofweek == datetime.now().weekday()]
+        
+        if len(same_weekday) > 0:
+            same_weekday_grouped = same_weekday.groupby(same_weekday['Date'].dt.date)['Quantite'].sum()
+            avg_same_weekday = same_weekday_grouped.mean()
+            
+            current_hour = datetime.now().hour
+            
+            if current_hour >= 14:
+                expected_by_now = avg_same_weekday * 0.6
+            elif current_hour >= 12:
+                expected_by_now = avg_same_weekday * 0.4
+            elif current_hour >= 10:
+                expected_by_now = avg_same_weekday * 0.1
+            else:
+                expected_by_now = 0
+            
+            if expected_by_now > 0 and current_sales_today > 0:
+                ratio = current_sales_today / expected_by_now
+                
+                if ratio > 1.2:
+                    adjustments['sales_trend_factor'] = 1.15
+                    adjustments['recommendations'].append(f"📈 Ventes actuelles +{int((ratio-1)*100)}% vs normal: Augmenter préparations dîner")
+                elif ratio < 0.8:
+                    adjustments['sales_trend_factor'] = 0.90
+                    adjustments['recommendations'].append(f"📉 Ventes actuelles {int((ratio-1)*100)}% vs normal: Réduire préparations dîner")
+                else:
+                    adjustments['recommendations'].append("✅ Ventes dans la normale")
+    
+    return adjustments
+
 if not st.session_state.logged_in:
     st.title("🍽️ Assistant de Préparation Restaurant Pro")
     st.markdown("### Connexion / Inscription")
@@ -1281,7 +1486,8 @@ if df is not None:
         has_financial_data = 'Prix_unitaire' in df.columns or 'Cout_unitaire' in df.columns or 'Chiffre_affaires' in df.columns or 'Marge' in df.columns
         
         if has_financial_data:
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+            tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+                "⚡ Prédictions Live",
                 "📈 Analyse", 
                 "🔮 Prévisions ML", 
                 "📋 Liste de Préparation",
@@ -1291,7 +1497,8 @@ if df is not None:
                 "🌤️ Alertes Météo"
             ])
         else:
-            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+            tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                "⚡ Prédictions Live",
                 "📈 Analyse", 
                 "🔮 Prévisions ML", 
                 "📋 Liste de Préparation",
@@ -1300,6 +1507,203 @@ if df is not None:
                 "🌤️ Alertes Météo"
             ])
             tab7 = None
+        
+        with tab0:
+            st.subheader("⚡ Prédictions en Temps Réel - Aujourd'hui")
+            
+            current_time = datetime.now()
+            st.info(f"🕐 **{current_time.strftime('%A %d %B %Y - %H:%M')}**")
+            
+            city = current_resto_data['city']
+            
+            df_temp = df.copy()
+            df_temp['Date'] = pd.to_datetime(df_temp['Date'])
+            today_sales = df_temp[df_temp['Date'].dt.date == current_time.date()]
+            total_today = today_sales['Quantite'].sum() if len(today_sales) > 0 else 0
+            
+            adjustments = get_realtime_adjustments(city, df, total_today)
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("📊 Ventes Aujourd'hui", f"{int(total_today)} portions")
+            
+            with col2:
+                weather_icon = "☀️" if adjustments['weather_factor'] > 1 else ("🌧️" if adjustments['weather_factor'] < 0.95 else "☁️")
+                st.metric(f"{weather_icon} Impact Météo", f"{int((adjustments['weather_factor'] - 1) * 100):+d}%")
+            
+            with col3:
+                trend_icon = "📈" if adjustments['sales_trend_factor'] > 1 else ("📉" if adjustments['sales_trend_factor'] < 1 else "➡️")
+                st.metric(f"{trend_icon} Tendance Ventes", f"{int((adjustments['sales_trend_factor'] - 1) * 100):+d}%")
+            
+            if adjustments['recommendations']:
+                st.markdown("### 💡 Recommandations Temps Réel")
+                for rec in adjustments['recommendations']:
+                    st.info(rec)
+            
+            st.markdown("---")
+            st.markdown("### 🕐 Prédictions Heure par Heure")
+            
+            plats_list = df['Plat'].unique().tolist()
+            
+            if 'Heure' in df.columns:
+                st.success("✅ Colonne 'Heure' détectée - Prédictions horaires précises disponibles")
+                
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    plat_live = st.selectbox(
+                        "Sélectionner un plat",
+                        plats_list,
+                        key="plat_live_select"
+                    )
+                
+                with col2:
+                    auto_refresh = st.checkbox("🔄 Rafraîchir auto (5min)", value=False)
+                
+                if plat_live:
+                    intraday_pred = predict_intraday_sales(df, plat_live, current_time.hour)
+                    
+                    if intraday_pred is not None and len(intraday_pred) > 0:
+                        intraday_pred['Quantite_ajustee'] = (
+                            intraday_pred['Quantite_prevue'] * 
+                            adjustments['weather_factor'] * 
+                            adjustments['sales_trend_factor']
+                        ).round(0).astype(int)
+                        
+                        st.markdown(f"#### 🍽️ {plat_live} - Prévisions Restantes Aujourd'hui")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("##### 📋 Tableau Détaillé")
+                            display_df = intraday_pred[['Heure', 'Service', 'Quantite_prevue', 'Quantite_ajustee', 'Confiance']].copy()
+                            display_df.columns = ['Heure', 'Service', 'Prévu Base', 'Prévu Ajusté', 'Confiance']
+                            
+                            st.dataframe(
+                                display_df,
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                            
+                            total_remaining = intraday_pred['Quantite_ajustee'].sum()
+                            st.metric("📦 Total à Préparer (reste du jour)", f"{int(total_remaining)} portions")
+                        
+                        with col2:
+                            st.markdown("##### 📊 Graphique Horaire")
+                            
+                            fig_hourly = go.Figure()
+                            
+                            fig_hourly.add_trace(go.Bar(
+                                x=intraday_pred['Heure'],
+                                y=intraday_pred['Quantite_prevue'],
+                                name='Prévu (base)',
+                                marker_color='lightblue',
+                                opacity=0.6
+                            ))
+                            
+                            fig_hourly.add_trace(go.Bar(
+                                x=intraday_pred['Heure'],
+                                y=intraday_pred['Quantite_ajustee'],
+                                name='Prévu (ajusté)',
+                                marker_color='darkblue'
+                            ))
+                            
+                            fig_hourly.update_layout(
+                                title="Prévisions par Heure",
+                                xaxis_title="Heure",
+                                yaxis_title="Quantité",
+                                barmode='group',
+                                height=400
+                            )
+                            
+                            st.plotly_chart(fig_hourly, use_container_width=True)
+                        
+                        if 'Note' in intraday_pred.columns and len(intraday_pred) > 0:
+                            st.info(intraday_pred['Note'].iloc[0])
+                        
+                        st.markdown("---")
+                        st.markdown("##### 🎯 Conseils de Préparation")
+                        
+                        dejeuner_qty = intraday_pred[intraday_pred['Service'] == 'Déjeuner']['Quantite_ajustee'].sum()
+                        diner_qty = intraday_pred[intraday_pred['Service'] == 'Dîner']['Quantite_ajustee'].sum()
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            if dejeuner_qty > 0:
+                                st.success(f"🍽️ **Déjeuner** : Préparer {int(dejeuner_qty)} portions")
+                                if current_time.hour < 11:
+                                    st.caption("⏰ À préparer avant 11h00")
+                                elif current_time.hour < 14:
+                                    st.caption("⚠️ Service en cours")
+                                else:
+                                    st.caption("✅ Service terminé")
+                        
+                        with col2:
+                            if diner_qty > 0:
+                                st.success(f"🌙 **Dîner** : Préparer {int(diner_qty)} portions")
+                                if current_time.hour < 18:
+                                    st.caption("⏰ À préparer avant 18h00")
+                                elif current_time.hour < 22:
+                                    st.caption("⚠️ Service en cours")
+                                else:
+                                    st.caption("✅ Service terminé")
+                    
+                    else:
+                        st.warning(f"⚠️ Pas assez de données horaires pour {plat_live}")
+                        st.info("💡 Ajoutez une colonne 'Heure' dans vos données pour activer les prédictions horaires précises")
+            
+            else:
+                st.warning("⚠️ **Prédictions horaires désactivées**")
+                st.info("💡 **Pour activer** : Ajoutez une colonne **'Heure'** (format HH:MM) dans votre fichier Excel")
+                st.info("📝 **Exemple** : `12:30`, `19:45`, etc.")
+                
+                st.markdown("### 📊 Vue d'Ensemble Journée")
+                
+                plat_overview = st.selectbox("Sélectionner un plat", plats_list, key="plat_overview")
+                
+                if plat_overview:
+                    plat_data = df[df['Plat'] == plat_overview].copy()
+                    plat_data['Date'] = pd.to_datetime(plat_data['Date'])
+                    
+                    daily_avg = plat_data.groupby('Date')['Quantite'].sum().mean()
+                    
+                    adjusted_total = daily_avg * adjustments['weather_factor'] * adjustments['sales_trend_factor']
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("📊 Moyenne Journalière", f"{int(daily_avg)} portions")
+                    
+                    with col2:
+                        st.metric("🎯 Prévu Aujourd'hui (ajusté)", f"{int(adjusted_total)} portions")
+                    
+                    with col3:
+                        remaining = max(0, int(adjusted_total - total_today))
+                        st.metric("📦 Reste à Vendre", f"{remaining} portions")
+                    
+                    if current_time.hour < 14:
+                        dejeuner_portion = adjusted_total * 0.55
+                        diner_portion = adjusted_total * 0.45
+                    else:
+                        dejeuner_portion = total_today
+                        diner_portion = max(0, adjusted_total - total_today)
+                    
+                    st.markdown("#### 🍽️ Répartition Services")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.info(f"☀️ **Déjeuner** : {int(dejeuner_portion)} portions")
+                    
+                    with col2:
+                        st.info(f"🌙 **Dîner** : {int(diner_portion)} portions")
+            
+            if auto_refresh:
+                st.caption("🔄 Page se rafraîchit automatiquement toutes les 5 minutes")
+                time.sleep(300)
+                st.rerun()
         
         with tab1:
             st.subheader("Analyse des Ventes Passées")
