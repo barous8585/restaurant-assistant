@@ -19,6 +19,17 @@ import os
 import hashlib
 import time
 
+# Import du module de gestion des sources de données
+try:
+    from data_sources import (
+        DataSourceManager, GoogleSheetsConnector, OneDriveConnector,
+        DropboxConnector, URLConnector, AutoSyncManager,
+        format_last_sync, get_source_icon
+    )
+    DATA_SOURCES_AVAILABLE = True
+except ImportError:
+    DATA_SOURCES_AVAILABLE = False
+
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="Assistant Préparation Restaurant Pro", page_icon="🍽️", layout="wide")
@@ -1324,6 +1335,237 @@ if st.sidebar.button("🚪 Se déconnecter"):
     st.session_state.restaurants = {}
     st.session_state.current_restaurant = None
     st.rerun()
+
+st.sidebar.markdown("---")
+
+# Section Sources de Données
+if DATA_SOURCES_AVAILABLE and st.session_state.current_restaurant:
+    with st.sidebar.expander("📊 Sources de Données"):
+        dsm = DataSourceManager(st.session_state.username)
+        
+        st.markdown("### 🔗 Type de Source")
+        source_options = list(DataSourceManager.SUPPORTED_SOURCES.items())
+        source_labels = [f"{get_source_icon(k)} {v}" for k, v in source_options]
+        source_keys = [k for k, _ in source_options]
+        
+        current_source = dsm.get_active_source()
+        current_index = source_keys.index(current_source) if current_source in source_keys else 0
+        
+        selected_source = st.selectbox(
+            "Sélectionnez votre source",
+            options=source_keys,
+            format_func=lambda x: f"{get_source_icon(x)} {DataSourceManager.SUPPORTED_SOURCES[x]}",
+            index=current_index,
+            key="data_source_selector"
+        )
+        
+        st.markdown("---")
+        
+        # Configuration par source
+        if selected_source == 'google_sheets':
+            st.markdown("### 📊 Configuration Google Sheets")
+            
+            existing_config = dsm.get_source_config('google_sheets') or {}
+            
+            sheet_url = st.text_input(
+                "URL de la Google Sheet",
+                value=existing_config.get('sheet_url', ''),
+                placeholder="https://docs.google.com/spreadsheets/d/...",
+                key="gsheet_url"
+            )
+            
+            sheet_name = st.text_input(
+                "Nom de la feuille (optionnel)",
+                value=existing_config.get('sheet_name', ''),
+                placeholder="Feuille1",
+                key="gsheet_name"
+            )
+            
+            is_public = st.checkbox(
+                "Feuille publique (accès en lecture)",
+                value=existing_config.get('is_public', True),
+                key="gsheet_public"
+            )
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("💾 Sauvegarder", key="save_gsheet"):
+                    dsm.add_source('google_sheets', {
+                        'sheet_url': sheet_url,
+                        'sheet_name': sheet_name,
+                        'is_public': is_public
+                    })
+                    dsm.set_active_source('google_sheets')
+                    st.success("✅ Configuration sauvegardée")
+            
+            with col2:
+                if st.button("🧪 Tester", key="test_gsheet"):
+                    connector = GoogleSheetsConnector()
+                    test_df = connector.read_sheet(sheet_url, sheet_name)
+                    if test_df is not None:
+                        st.success(f"✅ Connexion OK - {len(test_df)} lignes")
+                    else:
+                        st.error("❌ Échec de connexion")
+        
+        elif selected_source == 'onedrive':
+            st.markdown("### ☁️ Configuration OneDrive")
+            
+            existing_config = dsm.get_source_config('onedrive') or {}
+            
+            file_url = st.text_input(
+                "URL du fichier Excel",
+                value=existing_config.get('file_url', ''),
+                placeholder="https://1drv.ms/x/...",
+                key="onedrive_url"
+            )
+            
+            use_oauth = st.checkbox(
+                "Utiliser OAuth2 (avancé)",
+                value=existing_config.get('use_oauth', False),
+                key="onedrive_oauth"
+            )
+            
+            if use_oauth:
+                client_id = st.text_input(
+                    "Client ID",
+                    value=existing_config.get('client_id', ''),
+                    type="password",
+                    key="onedrive_client_id"
+                )
+                client_secret = st.text_input(
+                    "Client Secret",
+                    value=existing_config.get('client_secret', ''),
+                    type="password",
+                    key="onedrive_client_secret"
+                )
+            
+            if st.button("💾 Sauvegarder", key="save_onedrive"):
+                config = {'file_url': file_url, 'use_oauth': use_oauth}
+                if use_oauth:
+                    config['client_id'] = client_id
+                    config['client_secret'] = client_secret
+                
+                dsm.add_source('onedrive', config)
+                dsm.set_active_source('onedrive')
+                st.success("✅ Configuration sauvegardée")
+        
+        elif selected_source == 'dropbox':
+            st.markdown("### 📦 Configuration Dropbox")
+            
+            existing_config = dsm.get_source_config('dropbox') or {}
+            
+            st.info("💡 Créez un access token sur [Dropbox App Console](https://www.dropbox.com/developers/apps)")
+            
+            access_token = st.text_input(
+                "Access Token",
+                value=existing_config.get('access_token', ''),
+                type="password",
+                key="dropbox_token"
+            )
+            
+            file_path = st.text_input(
+                "Chemin du fichier",
+                value=existing_config.get('file_path', ''),
+                placeholder="/Restaurant/ventes.xlsx",
+                key="dropbox_path"
+            )
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("💾 Sauvegarder", key="save_dropbox"):
+                    dsm.add_source('dropbox', {
+                        'access_token': access_token,
+                        'file_path': file_path
+                    })
+                    dsm.set_active_source('dropbox')
+                    st.success("✅ Configuration sauvegardée")
+            
+            with col2:
+                if st.button("🧪 Tester", key="test_dropbox"):
+                    connector = DropboxConnector()
+                    if connector.authenticate(access_token):
+                        test_df = connector.read_file(file_path)
+                        if test_df is not None:
+                            st.success(f"✅ Connexion OK - {len(test_df)} lignes")
+                        else:
+                            st.error("❌ Fichier introuvable")
+                    else:
+                        st.error("❌ Token invalide")
+        
+        elif selected_source == 'url':
+            st.markdown("### 🔗 Configuration URL Publique")
+            
+            existing_config = dsm.get_source_config('url') or {}
+            
+            public_url = st.text_input(
+                "URL du fichier CSV/Excel",
+                value=existing_config.get('url', ''),
+                placeholder="https://example.com/data.csv",
+                key="public_url"
+            )
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("💾 Sauvegarder", key="save_url"):
+                    dsm.add_source('url', {'url': public_url})
+                    dsm.set_active_source('url')
+                    st.success("✅ Configuration sauvegardée")
+            
+            with col2:
+                if st.button("🧪 Tester", key="test_url"):
+                    test_df = URLConnector.read_from_url(public_url)
+                    if test_df is not None:
+                        st.success(f"✅ Connexion OK - {len(test_df)} lignes")
+                    else:
+                        st.error("❌ URL invalide ou inaccessible")
+        
+        else:  # upload
+            st.markdown("### 📁 Mode Upload Manuel")
+            st.info("Mode par défaut : Importez vos fichiers manuellement dans la section principale")
+        
+        # Section synchronisation automatique
+        if selected_source != 'upload':
+            st.markdown("---")
+            st.markdown("### ⚡ Synchronisation Automatique")
+            
+            auto_sync = st.checkbox(
+                "Activer la synchronisation automatique",
+                value=dsm.config.get('auto_sync', False),
+                key="auto_sync_toggle"
+            )
+            
+            if auto_sync:
+                sync_interval = st.slider(
+                    "Intervalle de synchronisation (minutes)",
+                    min_value=1,
+                    max_value=60,
+                    value=dsm.config.get('sync_interval', 10),
+                    key="sync_interval_slider"
+                )
+                
+                dsm.config['auto_sync'] = True
+                dsm.config['sync_interval'] = sync_interval
+                dsm.save_config()
+                
+                # Affichage dernière sync
+                source_config = dsm.get_source_config(selected_source)
+                if source_config:
+                    last_sync = source_config.get('last_sync')
+                    st.caption(f"📅 Dernière sync: {format_last_sync(last_sync)}")
+                
+                # Bouton sync manuelle
+                if st.button("🔄 Synchroniser Maintenant", key="sync_now"):
+                    sync_manager = AutoSyncManager(dsm)
+                    synced_df = sync_manager.sync_data()
+                    
+                    if synced_df is not None:
+                        st.success(f"✅ Synchronisation réussie - {len(synced_df)} lignes")
+                        # TODO: Intégrer synced_df dans le flux principal
+                    else:
+                        st.error("❌ Échec de la synchronisation")
+            else:
+                dsm.config['auto_sync'] = False
+                dsm.save_config()
 
 st.sidebar.markdown("---")
 
