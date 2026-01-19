@@ -1,0 +1,13 @@
+Mois,Annee,Plat,Categorie,Quantite,Prix_unitaire,Cout_unitaire
+1,2024,Burger Classic,Plat,750,12.50,4.80
+1,2024,Pizza Margherita,Plat,580,11.00,3.50
+1,2024,Salade César,Entrée,320,8.50,2.80
+1,2024,Tiramisu,Dessert,450,6.50,2.00
+2,2024,Burger Classic,Plat,820,12.50,4.80
+2,2024,Pizza Margherita,Plat,620,11.00,3.50
+2,2024,Salade César,Entrée,340,8.50,2.80
+2,2024,Tiramisu,Dessert,490,6.50,2.00
+3,2024,Burger Classic,Plat,880,12.50,4.80
+3,2024,Pizza Margherita,Plat,690,11.00,3.50
+3,2024,Salade César,Entrée,380,8.50,2.80
+3,2024,Tiramisu,Dessert,520,6.50,2.00
