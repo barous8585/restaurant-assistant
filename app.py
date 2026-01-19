@@ -2454,7 +2454,7 @@ if df is not None:
                     
                     st.info(f"💡 **En 1 an, vous économiserez environ {cumulative:.0f}€ en réduisant le gaspillage !**")
         
-        with tab5:
+        with tab6:
             st.subheader("📦 Gestion des Stocks et Commandes Fournisseurs")
             
             st.markdown("### 🥘 Configuration des Recettes")
@@ -2553,7 +2553,7 @@ if df is not None:
                 st.info("💡 Configurez d'abord vos recettes ci-dessus pour générer automatiquement vos listes de commandes")
         
         if has_financial_data and tab7 is not None:
-            with tab7:
+            with tab5:
                 st.subheader("💎 Analyse de Rentabilité")
                 
                 if 'Chiffre_affaires' in df.columns:
@@ -2703,7 +2703,7 @@ if df is not None:
                     )
                     st.plotly_chart(fig_cat, use_container_width=True)
         
-        with tab6:
+        with tab7:
             st.subheader("🌤️ Alertes Météo et Impact sur les Ventes")
             
             city = current_resto_data['city']
