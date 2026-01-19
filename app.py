@@ -337,6 +337,111 @@ def extract_data_from_text(text):
     
     return pd.DataFrame(data) if data else None
 
+def map_columns_intelligently(df):
+    """Mapping intelligent de TOUTES les colonnes possibles d'un restaurant"""
+    column_mapping = {}
+    
+    for col in df.columns:
+        col_lower = col.lower().replace('_', ' ').replace('-', ' ')
+        
+        # Colonnes obligatoires
+        if any(word in col_lower for word in ['date', 'jour', 'day']):
+            column_mapping[col] = 'Date'
+        elif any(word in col_lower for word in ['plat', 'produit', 'item', 'nom', 'dish', 'product']):
+            column_mapping[col] = 'Plat'
+        elif any(word in col_lower for word in ['quantit', 'qte', 'qty', 'quantity', 'nombre']):
+            column_mapping[col] = 'Quantite'
+        
+        # Colonnes optionnelles - Catégorie et type
+        elif any(word in col_lower for word in ['categ', 'famille', 'type plat']):
+            column_mapping[col] = 'Categorie'
+        elif any(word in col_lower for word in ['service', 'moment', 'shift', 'periode']):
+            column_mapping[col] = 'Service'
+        
+        # Colonnes financières
+        elif any(word in col_lower for word in ['prix unit', 'pu', 'prix vente', 'tarif']) and 'cout' not in col_lower:
+            column_mapping[col] = 'Prix_unitaire'
+        elif any(word in col_lower for word in ['cout unit', 'coût unit', 'cu', 'prix achat', 'cost']):
+            column_mapping[col] = 'Cout_unitaire'
+        elif any(word in col_lower for word in ['chiffre', 'ca', 'revenue', 'ventes']) and 'affaire' in col_lower:
+            column_mapping[col] = 'Chiffre_affaires'
+        elif 'marge' in col_lower and 'taux' not in col_lower:
+            column_mapping[col] = 'Marge'
+        elif 'tva' in col_lower and 'taux' not in col_lower:
+            column_mapping[col] = 'TVA'
+        
+        # Colonnes contextuelles
+        elif any(word in col_lower for word in ['zone', 'emplacement', 'salle', 'area']):
+            column_mapping[col] = 'Zone'
+        elif any(word in col_lower for word in ['table', 'numero']):
+            column_mapping[col] = 'Table'
+        elif any(word in col_lower for word in ['serveur', 'waiter']):
+            column_mapping[col] = 'Serveur'
+        elif any(word in col_lower for word in ['meteo', 'météo', 'weather', 'temps']) and 'attente' not in col_lower:
+            column_mapping[col] = 'Meteo'
+        elif any(word in col_lower for word in ['temperature', 'temp']) and 'ture' in col_lower:
+            column_mapping[col] = 'Temperature'
+        
+        # Colonnes marketing
+        elif any(word in col_lower for word in ['promotion', 'promo', 'offre']):
+            column_mapping[col] = 'Promotion'
+        elif any(word in col_lower for word in ['remise', 'discount', 'reduction']):
+            column_mapping[col] = 'Remise'
+        elif any(word in col_lower for word in ['canal', 'channel', 'mode vente']):
+            column_mapping[col] = 'Canal'
+        elif any(word in col_lower for word in ['plateforme', 'platform']):
+            column_mapping[col] = 'Plateforme'
+        
+        # Colonnes opérationnelles
+        elif any(word in col_lower for word in ['heure', 'hour', 'time']) and 'attente' not in col_lower:
+            column_mapping[col] = 'Heure'
+        elif any(word in col_lower for word in ['note', 'rating', 'avis', 'satisfaction']):
+            column_mapping[col] = 'Note_client'
+        elif any(word in col_lower for word in ['commentaire', 'comment', 'remarque']):
+            column_mapping[col] = 'Commentaire'
+        
+        # Colonnes analytiques
+        elif 'mois' in col_lower and col_lower == 'mois':
+            column_mapping[col] = 'Mois'
+        elif any(word in col_lower for word in ['annee', 'année', 'year']):
+            column_mapping[col] = 'Annee'
+        elif any(word in col_lower for word in ['trimestre', 'quarter']):
+            column_mapping[col] = 'Trimestre'
+        elif any(word in col_lower for word in ['semaine', 'week']) and 'jour' not in col_lower:
+            column_mapping[col] = 'Semaine'
+        elif any(word in col_lower for word in ['saison', 'season']):
+            column_mapping[col] = 'Saison'
+    
+    return column_mapping
+
+def calculate_missing_columns(df):
+    """Calcule automatiquement les colonnes manquantes si possible"""
+    df = df.copy()
+    
+    # Calcul du chiffre d'affaires si manquant
+    if 'Chiffre_affaires' not in df.columns and 'Prix_unitaire' in df.columns and 'Quantite' in df.columns:
+        df['Chiffre_affaires'] = df['Prix_unitaire'] * df['Quantite']
+    
+    # Calcul du coût total si manquant
+    if 'Cout_total' not in df.columns and 'Cout_unitaire' in df.columns and 'Quantite' in df.columns:
+        df['Cout_total'] = df['Cout_unitaire'] * df['Quantite']
+    
+    # Calcul de la marge unitaire si manquant
+    if 'Marge_unitaire' not in df.columns and 'Prix_unitaire' in df.columns and 'Cout_unitaire' in df.columns:
+        df['Marge_unitaire'] = df['Prix_unitaire'] - df['Cout_unitaire']
+    
+    # Calcul de la marge totale si manquant
+    if 'Marge' not in df.columns and 'Marge_unitaire' in df.columns and 'Quantite' in df.columns:
+        df['Marge'] = df['Marge_unitaire'] * df['Quantite']
+    elif 'Marge' not in df.columns and 'Chiffre_affaires' in df.columns and 'Cout_total' in df.columns:
+        df['Marge'] = df['Chiffre_affaires'] - df['Cout_total']
+    
+    # Calcul du taux de marge si manquant
+    if 'Taux_marge' not in df.columns and 'Marge_unitaire' in df.columns and 'Prix_unitaire' in df.columns:
+        df['Taux_marge'] = (df['Marge_unitaire'] / df['Prix_unitaire'] * 100).fillna(0)
+    
+    return df
+
 @st.cache_data
 def load_file(uploaded_file):
     try:
@@ -379,17 +484,10 @@ def load_file(uploaded_file):
         
         df.columns = df.columns.str.strip()
         
-        column_mapping = {}
-        for col in df.columns:
-            col_lower = col.lower()
-            if 'date' in col_lower or 'jour' in col_lower:
-                column_mapping[col] = 'Date'
-            elif 'plat' in col_lower or 'produit' in col_lower or 'item' in col_lower or 'nom' in col_lower:
-                column_mapping[col] = 'Plat'
-            elif 'quantit' in col_lower or 'nombre' in col_lower or 'qte' in col_lower or 'qty' in col_lower:
-                column_mapping[col] = 'Quantite'
-        
+        column_mapping = map_columns_intelligently(df)
         df = df.rename(columns=column_mapping)
+        
+        df = calculate_missing_columns(df)
         
         return df
     
@@ -470,7 +568,7 @@ def predict_sales_ml(df, plat, jours_prevision=7):
     plat_data = plat_data.sort_values('Date')
     plat_data = create_features(plat_data)
     
-    plat_data_agg = plat_data.groupby('Date').agg({
+    agg_dict = {
         'Quantite': 'sum',
         'Jour_Semaine': 'first',
         'Jour_Mois': 'first',
@@ -481,7 +579,40 @@ def predict_sales_ml(df, plat, jours_prevision=7):
         'Est_Weekend': 'first',
         'Est_Debut_Mois': 'first',
         'Est_Fin_Mois': 'first'
-    }).reset_index()
+    }
+    
+    optional_features = []
+    
+    if 'Prix_unitaire' in plat_data.columns:
+        agg_dict['Prix_unitaire'] = 'mean'
+        optional_features.append('Prix_unitaire')
+    
+    if 'Service' in plat_data.columns:
+        plat_data['Service_encoded'] = plat_data['Service'].astype('category').cat.codes
+        agg_dict['Service_encoded'] = 'first'
+        optional_features.append('Service_encoded')
+    
+    if 'Zone' in plat_data.columns:
+        plat_data['Zone_encoded'] = plat_data['Zone'].astype('category').cat.codes
+        agg_dict['Zone_encoded'] = 'first'
+        optional_features.append('Zone_encoded')
+    
+    if 'Meteo' in plat_data.columns:
+        plat_data['Meteo_encoded'] = plat_data['Meteo'].astype('category').cat.codes
+        agg_dict['Meteo_encoded'] = 'first'
+        optional_features.append('Meteo_encoded')
+    
+    if 'Promotion' in plat_data.columns:
+        plat_data['Promotion_encoded'] = (plat_data['Promotion'].astype(str).str.lower() == 'oui').astype(int)
+        agg_dict['Promotion_encoded'] = 'max'
+        optional_features.append('Promotion_encoded')
+    
+    if 'Canal' in plat_data.columns:
+        plat_data['Canal_encoded'] = plat_data['Canal'].astype('category').cat.codes
+        agg_dict['Canal_encoded'] = 'first'
+        optional_features.append('Canal_encoded')
+    
+    plat_data_agg = plat_data.groupby('Date').agg(agg_dict).reset_index()
     
     for lag in [1, 3, 7, 14]:
         plat_data_agg[f'Lag_{lag}'] = plat_data_agg['Quantite'].shift(lag)
@@ -503,7 +634,7 @@ def predict_sales_ml(df, plat, jours_prevision=7):
     features = ['Jour_Semaine', 'Jour_Mois', 'Mois', 'Semaine_Annee', 'Trimestre',
                 'Est_Weekend', 'Est_Debut_Mois', 'Est_Fin_Mois', 'Tendance',
                 'Lag_1', 'Lag_3', 'Lag_7', 'Lag_14',
-                'Moyenne_Mobile_7', 'Moyenne_Mobile_14', 'Ecart_Type_7']
+                'Moyenne_Mobile_7', 'Moyenne_Mobile_14', 'Ecart_Type_7'] + optional_features
     
     X_train = train_data[features]
     y_train = train_data['Quantite']
@@ -566,6 +697,10 @@ def predict_sales_ml(df, plat, jours_prevision=7):
             'Est_Fin_Mois': int(future_date.day >= 25),
             'Tendance': last_row['Tendance'] + i
         }
+        
+        for feat in optional_features:
+            if feat in last_row:
+                new_row[feat] = last_row[feat]
         
         if len(current_data) >= 14:
             new_row['Lag_1'] = current_data.iloc[-1]['Quantite']
@@ -1116,8 +1251,17 @@ if df is not None:
     else:
         df = create_features(df)
         
+        optional_columns = [col for col in df.columns if col not in required_columns and col not in ['Jour_Semaine', 'Jour_Mois', 'Mois', 'Annee', 'Semaine_Annee', 'Trimestre', 'Est_Weekend', 'Est_Debut_Mois', 'Est_Fin_Mois']]
+        
         st.sidebar.success(f"✅ {len(df)} ventes chargées")
         st.sidebar.info(f"📅 Période: {df['Date'].min().strftime('%d/%m/%Y')} - {df['Date'].max().strftime('%d/%m/%Y')}")
+        
+        if optional_columns:
+            with st.sidebar.expander(f"📊 Colonnes détectées ({len(optional_columns) + 3})"):
+                st.write("**Colonnes obligatoires :**")
+                st.write(", ".join(required_columns))
+                st.write("**Colonnes optionnelles :**")
+                st.write(", ".join(optional_columns))
         
         col1, col2, col3, col4 = st.columns(4)
         
@@ -1134,14 +1278,28 @@ if df is not None:
         
         st.markdown("---")
         
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "📈 Analyse", 
-            "🔮 Prévisions ML", 
-            "📋 Liste de Préparation",
-            "💰 Économies & ROI",
-            "📦 Stocks & Commandes",
-            "🌤️ Alertes Météo"
-        ])
+        has_financial_data = 'Prix_unitaire' in df.columns or 'Cout_unitaire' in df.columns or 'Chiffre_affaires' in df.columns or 'Marge' in df.columns
+        
+        if has_financial_data:
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+                "📈 Analyse", 
+                "🔮 Prévisions ML", 
+                "📋 Liste de Préparation",
+                "💰 Économies & ROI",
+                "💎 Rentabilité",
+                "📦 Stocks & Commandes",
+                "🌤️ Alertes Météo"
+            ])
+        else:
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+                "📈 Analyse", 
+                "🔮 Prévisions ML", 
+                "📋 Liste de Préparation",
+                "💰 Économies & ROI",
+                "📦 Stocks & Commandes",
+                "🌤️ Alertes Météo"
+            ])
+            tab7 = None
         
         with tab1:
             st.subheader("Analyse des Ventes Passées")
@@ -1595,6 +1753,157 @@ if df is not None:
                     st.info("💡 Aucune prévision disponible pour cette date avec les recettes configurées")
             else:
                 st.info("💡 Configurez d'abord vos recettes ci-dessus pour générer automatiquement vos listes de commandes")
+        
+        if has_financial_data and tab7 is not None:
+            with tab7:
+                st.subheader("💎 Analyse de Rentabilité")
+                
+                if 'Chiffre_affaires' in df.columns:
+                    total_ca = df['Chiffre_affaires'].sum()
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        st.metric("💰 CA Total", f"{total_ca:,.0f}€")
+                    
+                    if 'Cout_total' in df.columns:
+                        total_cout = df['Cout_total'].sum()
+                        with col2:
+                            st.metric("💸 Coût Total", f"{total_cout:,.0f}€")
+                    
+                    if 'Marge' in df.columns:
+                        total_marge = df['Marge'].sum()
+                        with col3:
+                            st.metric("💚 Marge Totale", f"{total_marge:,.0f}€")
+                        
+                        if 'Cout_total' in df.columns and total_ca > 0:
+                            taux_marge_global = (total_marge / total_ca) * 100
+                            with col4:
+                                st.metric("📊 Taux de Marge", f"{taux_marge_global:.1f}%")
+                
+                st.markdown("---")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("#### 🏆 Top 10 Plats les Plus Rentables")
+                    
+                    if 'Marge' in df.columns:
+                        top_rentables = df.groupby('Plat').agg({
+                            'Marge': 'sum',
+                            'Quantite': 'sum'
+                        }).sort_values('Marge', ascending=False).head(10)
+                        
+                        fig_rentables = px.bar(
+                            top_rentables,
+                            x=top_rentables.index,
+                            y='Marge',
+                            labels={'x': 'Plat', 'Marge': 'Marge Totale (€)'},
+                            title="Plats classés par marge totale",
+                            color='Marge',
+                            color_continuous_scale='Greens'
+                        )
+                        st.plotly_chart(fig_rentables, use_container_width=True)
+                    else:
+                        st.info("💡 Ajoutez les colonnes Prix_unitaire et Cout_unitaire pour voir cette analyse")
+                
+                with col2:
+                    st.markdown("#### 📉 Plats à Faible Rentabilité")
+                    
+                    if 'Taux_marge' in df.columns:
+                        faible_marge = df.groupby('Plat').agg({
+                            'Taux_marge': 'mean',
+                            'Quantite': 'sum',
+                            'Chiffre_affaires': 'sum'
+                        }).sort_values('Taux_marge').head(10)
+                        
+                        fig_faible = px.bar(
+                            faible_marge,
+                            x=faible_marge.index,
+                            y='Taux_marge',
+                            labels={'x': 'Plat', 'Taux_marge': 'Taux de Marge (%)'},
+                            title="Plats avec le taux de marge le plus faible",
+                            color='Taux_marge',
+                            color_continuous_scale='Reds_r'
+                        )
+                        st.plotly_chart(fig_faible, use_container_width=True)
+                        
+                        st.warning("⚠️ Envisagez d'augmenter les prix ou de réduire les coûts pour ces plats")
+                    else:
+                        st.info("💡 Les colonnes Prix et Coût permettraient cette analyse")
+                
+                st.markdown("---")
+                st.markdown("#### 📊 Analyse ABC des Plats")
+                st.info("📌 **Analyse ABC** : Classement par contribution au chiffre d'affaires")
+                
+                if 'Chiffre_affaires' in df.columns:
+                    abc_data = df.groupby('Plat').agg({
+                        'Chiffre_affaires': 'sum',
+                        'Quantite': 'sum'
+                    }).sort_values('Chiffre_affaires', ascending=False)
+                    
+                    abc_data['CA_Cumul'] = abc_data['Chiffre_affaires'].cumsum()
+                    abc_data['CA_Pct_Cumul'] = (abc_data['CA_Cumul'] / abc_data['Chiffre_affaires'].sum()) * 100
+                    
+                    abc_data['Categorie_ABC'] = 'C'
+                    abc_data.loc[abc_data['CA_Pct_Cumul'] <= 80, 'Categorie_ABC'] = 'A'
+                    abc_data.loc[(abc_data['CA_Pct_Cumul'] > 80) & (abc_data['CA_Pct_Cumul'] <= 95), 'Categorie_ABC'] = 'B'
+                    
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        abc_display = abc_data.reset_index()
+                        abc_display['CA'] = abc_display['Chiffre_affaires'].apply(lambda x: f"{x:.0f}€")
+                        abc_display['% Cumul'] = abc_display['CA_Pct_Cumul'].apply(lambda x: f"{x:.1f}%")
+                        
+                        st.dataframe(
+                            abc_display[['Plat', 'Quantite', 'CA', '% Cumul', 'Categorie_ABC']],
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    
+                    with col2:
+                        abc_counts = abc_data['Categorie_ABC'].value_counts()
+                        
+                        st.metric("🅰️ Plats catégorie A", abc_counts.get('A', 0))
+                        st.caption("80% du CA")
+                        
+                        st.metric("🅱️ Plats catégorie B", abc_counts.get('B', 0))
+                        st.caption("15% du CA")
+                        
+                        st.metric("©️ Plats catégorie C", abc_counts.get('C', 0))
+                        st.caption("5% du CA")
+                    
+                    st.success("💡 **Conseil** : Concentrez vos efforts sur les plats A, optimisez les B, envisagez de retirer les C peu rentables")
+                else:
+                    st.info("💡 Ajoutez une colonne Prix_unitaire pour activer l'analyse ABC")
+                
+                if 'Categorie' in df.columns and 'Marge' in df.columns:
+                    st.markdown("---")
+                    st.markdown("#### 📦 Rentabilité par Catégorie")
+                    
+                    cat_data = df.groupby('Categorie').agg({
+                        'Chiffre_affaires': 'sum',
+                        'Marge': 'sum',
+                        'Quantite': 'sum'
+                    }).reset_index()
+                    
+                    cat_data['Taux_marge'] = (cat_data['Marge'] / cat_data['Chiffre_affaires'] * 100).round(1)
+                    
+                    fig_cat = px.scatter(
+                        cat_data,
+                        x='Quantite',
+                        y='Taux_marge',
+                        size='Chiffre_affaires',
+                        color='Categorie',
+                        labels={
+                            'Quantite': 'Volume vendu',
+                            'Taux_marge': 'Taux de marge (%)',
+                            'Chiffre_affaires': 'CA'
+                        },
+                        title="Matrice Volume vs Rentabilité par Catégorie",
+                        hover_data=['Chiffre_affaires']
+                    )
+                    st.plotly_chart(fig_cat, use_container_width=True)
         
         with tab6:
             st.subheader("🌤️ Alertes Météo et Impact sur les Ventes")
