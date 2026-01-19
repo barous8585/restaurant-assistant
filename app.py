@@ -517,10 +517,95 @@ def load_file(uploaded_file):
         st.error(f"Erreur de chargement: {str(e)}")
         return None
 
+def safe_execute(func, *args, fallback_value=None, error_message="Une erreur est survenue", **kwargs):
+    """Exécute une fonction de manière sécurisée avec gestion d'erreur"""
+    try:
+        return func(*args, **kwargs)
+    except Exception as e:
+        st.warning(f"⚠️ {error_message}: {str(e)}")
+        return fallback_value
+
+def safe_format_date(date_value):
+    """Formate une date en toute sécurité"""
+    try:
+        if pd.isna(date_value):
+            return "N/A"
+        if isinstance(date_value, str):
+            return date_value
+        return date_value.strftime('%d/%m/%Y')
+    except:
+        return "N/A"
+
+def clean_and_validate_data(df):
+    """Nettoie et valide les données de manière robuste"""
+    df = df.copy()
+    
+    # 1. Nettoyage colonnes obligatoires
+    required_cols = ['Date', 'Plat', 'Quantite']
+    
+    # Date : Conversion ultra-robuste
+    if 'Date' in df.columns:
+        # Essayer plusieurs formats
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce', infer_datetime_format=True)
+        
+        # Supprimer lignes avec dates invalides
+        invalid_dates = df['Date'].isna().sum()
+        if invalid_dates > 0:
+            st.warning(f"⚠️ {invalid_dates} lignes avec dates invalides supprimées")
+        df = df.dropna(subset=['Date'])
+    
+    # Plat : Conversion en string et nettoyage
+    if 'Plat' in df.columns:
+        df['Plat'] = df['Plat'].astype(str).str.strip()
+        # Supprimer lignes vides
+        df = df[df['Plat'] != '']
+        df = df[df['Plat'].str.lower() != 'nan']
+    
+    # Quantité : Conversion en numérique
+    if 'Quantite' in df.columns:
+        # Remplacer virgules par points pour les décimaux
+        if df['Quantite'].dtype == 'object':
+            df['Quantite'] = df['Quantite'].astype(str).str.replace(',', '.').str.replace(' ', '')
+        
+        df['Quantite'] = pd.to_numeric(df['Quantite'], errors='coerce')
+        
+        # Supprimer quantités invalides ou négatives
+        invalid_qty = df['Quantite'].isna().sum()
+        if invalid_qty > 0:
+            st.warning(f"⚠️ {invalid_qty} lignes avec quantités invalides supprimées")
+        
+        df = df.dropna(subset=['Quantite'])
+        df = df[df['Quantite'] > 0]
+        
+        # Arrondir à l'entier
+        df['Quantite'] = df['Quantite'].round(0).astype(int)
+    
+    # 2. Nettoyage colonnes financières (si présentes)
+    financial_cols = ['Prix_unitaire', 'Cout_unitaire', 'Chiffre_affaires', 'Marge', 'Cout_total', 'Marge_unitaire']
+    
+    for col in financial_cols:
+        if col in df.columns:
+            if df[col].dtype == 'object':
+                # Nettoyer format monétaire (€, espaces, virgules)
+                df[col] = df[col].astype(str).str.replace('€', '').str.replace(' ', '').str.replace(',', '.')
+            
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            # Remplacer NaN par 0 pour colonnes financières
+            df[col] = df[col].fillna(0)
+    
+    # 3. Vérification données suffisantes
+    if len(df) == 0:
+        return None, "Aucune donnée valide après nettoyage"
+    
+    if len(df) < 7:
+        return None, f"Pas assez de données ({len(df)} lignes). Minimum 7 jours requis."
+    
+    return df, None
+
 def create_features(df):
     df = df.copy()
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    df = df.dropna(subset=['Date'])
+    
+    # Date déjà nettoyée par clean_and_validate_data
     df = df.sort_values('Date')
     
     df['Jour_Semaine'] = df['Date'].dt.dayofweek
@@ -581,7 +666,16 @@ def calculate_waste_savings(df, predictions):
         'reduction_percent': (monthly_savings / monthly_waste_traditional * 100) if monthly_waste_traditional > 0 else 0
     }
 
+def safe_predict_sales_ml(df, plat, jours_prevision=7):
+    """Wrapper sécurisé pour predict_sales_ml"""
+    try:
+        return predict_sales_ml(df, plat, jours_prevision)
+    except Exception as e:
+        st.warning(f"⚠️ Impossible de prédire pour {plat}: {str(e)}")
+        return None, None, None
+
 def predict_sales_ml(df, plat, jours_prevision=7):
+    """Prédictions ML - Note: Les erreurs doivent être gérées par l'appelant"""
     plat_data = df[df['Plat'] == plat].copy()
     
     if len(plat_data) < 14:
@@ -589,7 +683,7 @@ def predict_sales_ml(df, plat, jours_prevision=7):
     
     plat_data = plat_data.sort_values('Date')
     plat_data = create_features(plat_data)
-    
+
     agg_dict = {
         'Quantite': 'sum',
         'Jour_Semaine': 'first',
@@ -1694,8 +1788,20 @@ if uploaded_file is not None:
     with st.spinner("Chargement et analyse des données..."):
         df = load_file(uploaded_file)
         if df is not None:
-            st.session_state.restaurants[st.session_state.current_restaurant]['data'] = df
-            save_restaurant_data(st.session_state.username, st.session_state.restaurants)
+            # Nettoyage et validation robuste
+            df_cleaned, error_msg = clean_and_validate_data(df)
+            
+            if df_cleaned is None:
+                st.error(f"❌ {error_msg}")
+                st.stop()
+            else:
+                # Afficher statistiques de nettoyage
+                removed = len(df) - len(df_cleaned)
+                if removed > 0:
+                    st.info(f"ℹ️ {removed} lignes nettoyées sur {len(df)} ({(removed/len(df)*100):.1f}%)")
+                
+                st.session_state.restaurants[st.session_state.current_restaurant]['data'] = df_cleaned
+                save_restaurant_data(st.session_state.username, st.session_state.restaurants)
 
 current_resto_data = st.session_state.restaurants[st.session_state.current_restaurant]
 df = current_resto_data.get('data')
@@ -1711,7 +1817,15 @@ if df is not None:
         optional_columns = [col for col in df.columns if col not in required_columns and col not in ['Jour_Semaine', 'Jour_Mois', 'Mois', 'Annee', 'Semaine_Annee', 'Trimestre', 'Est_Weekend', 'Est_Debut_Mois', 'Est_Fin_Mois']]
         
         st.sidebar.success(f"✅ {len(df)} ventes chargées")
-        st.sidebar.info(f"📅 Période: {df['Date'].min().strftime('%d/%m/%Y')} - {df['Date'].max().strftime('%d/%m/%Y')}")
+        
+        # Affichage période sécurisé
+        try:
+            date_min = df['Date'].min()
+            date_max = df['Date'].max()
+            if pd.notna(date_min) and pd.notna(date_max):
+                st.sidebar.info(f"📅 Période: {safe_format_date(date_min)} - {safe_format_date(date_max)}")
+        except Exception as e:
+            st.sidebar.info("📅 Période: Données disponibles")
         
         if optional_columns:
             with st.sidebar.expander(f"📊 Colonnes détectées ({len(optional_columns) + 3})"):
@@ -1727,11 +1841,16 @@ if df is not None:
         with col2:
             st.metric("Plats Différents", f"{df['Plat'].nunique()}")
         with col3:
-            total_quantite = df['Quantite'].sum()
+            total_quantite = int(df['Quantite'].sum())
             st.metric("Quantité Totale", f"{total_quantite}")
         with col4:
-            jours_data = (df['Date'].max() - df['Date'].min()).days
-            st.metric("Jours de Données", f"{jours_data}")
+            try:
+                jours_data = (df['Date'].max() - df['Date'].min()).days
+                if jours_data < 0:
+                    jours_data = 0
+                st.metric("Jours de Données", f"{jours_data}")
+            except:
+                st.metric("Jours de Données", "N/A")
         
         st.markdown("---")
         
@@ -2042,7 +2161,11 @@ if df is not None:
             
             if plat_selectionne:
                 with st.spinner(f"Entraînement des modèles ML pour {plat_selectionne}..."):
-                    predictions, metrics, best_model_name = predict_sales_ml(df, plat_selectionne, jours_prevision)
+                    try:
+                        predictions, metrics, best_model_name = predict_sales_ml(df, plat_selectionne, jours_prevision)
+                    except Exception as e:
+                        st.error(f"❌ Erreur lors de la prédiction : {str(e)}")
+                        predictions, metrics, best_model_name = None, None, None
                 
                 if predictions is not None:
                     st.success(f"✅ Meilleur modèle sélectionné: **{best_model_name}**")
@@ -2124,7 +2247,7 @@ if df is not None:
             with st.spinner("Calcul des recommandations..."):
                 liste_prep = []
                 for plat in df['Plat'].unique():
-                    pred, _, _ = predict_sales_ml(df, plat, 30)
+                    pred, _, _ = safe_predict_sales_ml(df, plat, 30)
                     if pred is not None:
                         pred_date = pred[pred['Date'].dt.date == date_prep]
                         if not pred_date.empty:
@@ -2191,7 +2314,7 @@ if df is not None:
             
             all_predictions = []
             for plat in df['Plat'].unique():
-                pred, _, _ = predict_sales_ml(df, plat, analysis_days)
+                pred, _, _ = safe_predict_sales_ml(df, plat, analysis_days)
                 if pred is not None:
                     pred['Plat'] = plat
                     all_predictions.append(pred)
@@ -2377,7 +2500,7 @@ if df is not None:
                     
                     for plat in df['Plat'].unique():
                         if plat in recipes:
-                            pred, _, _ = predict_sales_ml(df, plat, 30)
+                            pred, _, _ = safe_predict_sales_ml(df, plat, 30)
                             if pred is not None:
                                 pred_date = pred[pred['Date'].dt.date == date_commande]
                                 if not pred_date.empty:
